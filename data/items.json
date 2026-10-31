@@ -1,0 +1,44 @@
+{
+  "items": [
+    {
+      "id": "top_knit_01",
+      "name": "奶油针织衫",
+      "category": "top",
+      "price": 0,
+      "src": "assets/clothes/tops/top_knit_01.png",
+      "isCustom": false
+    },
+    {
+      "id": "bottom_jeans_01",
+      "name": "直筒牛仔裤",
+      "category": "bottom",
+      "price": 0,
+      "src": "assets/clothes/bottoms/bottom_jeans_01.png",
+      "isCustom": false
+    },
+    {
+      "id": "dress_lolita_01",
+      "name": "草莓洛丽塔裙",
+      "category": "dress",
+      "price": 300,
+      "src": "assets/clothes/dresses/dress_lolita_01.png",
+      "isCustom": false
+    },
+    {
+      "id": "shoes_canvas_01",
+      "name": "小白鞋",
+      "category": "shoes",
+      "price": 0,
+      "src": "assets/clothes/shoes/shoes_canvas_01.png",
+      "isCustom": false
+    },
+    {
+      "id": "headAcc_ribbon_01",
+      "name": "蝴蝶结发饰",
+      "category": "headAcc",
+      "price": 0,
+      "src": "assets/clothes/accessories/headAcc_ribbon_01.png",
+      "isCustom": false
+    }
+  ]
+}

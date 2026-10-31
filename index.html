@@ -1,0 +1,107 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>今天应该穿什么呢？ / Cosa mi metto oggi?</title>
+<link rel="stylesheet" href="css/style.css">
+</head>
+<body>
+
+  <!-- ========== 语言切换（封面/房间均可见） ========== -->
+  <button id="btn-lang" class="lang-toggle" title="切换语言 / Cambia lingua">IT</button>
+
+  <!-- ========== 封面界面 ========== -->
+  <div id="screen-cover" class="screen active">
+    <div class="cover-content">
+      <h1 class="cover-title" id="cover-title">今天应该<br>穿什么呢？</h1>
+      <button id="btn-start" class="btn-start" data-i18n="start">START GAME</button>
+    </div>
+  </div>
+
+  <!-- ========== 主界面·房间 ========== -->
+  <div id="screen-room" class="screen">
+    <div id="room-bg" class="room-bg"></div>
+
+    <!-- 左上角金币 HUD -->
+    <div class="hud-coins">
+      <img src="assets/ui/coin.png" style="width:26px;height:26px;object-fit:contain;" alt="coin">
+      <span id="coin-num">0</span>
+      <button id="btn-char-set" style="margin-left:8px;background:none;border:none;cursor:pointer;font-size:18px;" title="人物设置">⚙</button>
+    </div>
+
+    <!-- 角色容器：统一 1000×1400 坐标系 -->
+    <div id="character-container" class="character-container"></div>
+
+    <!-- 右上角衣柜（语言切换按钮之下） -->
+    <button id="btn-wardrobe" class="room-btn btn-wardrobe">👗 <span data-i18n="wardrobe">衣柜</span></button>
+    <!-- 右下角商城 + 出门 -->
+    <div class="room-buttons">
+      <button id="btn-shop" class="room-btn">🛍 <span data-i18n="shop">商城</span></button>
+      <button id="btn-goout" class="room-btn">🚪 <span data-i18n="goout">出门</span></button>
+    </div>
+  </div>
+
+  <!-- ========== 衣柜面板（右侧滑出） ========== -->
+  <div id="wardrobe-panel" class="wardrobe-panel">
+    <div class="wardrobe-inner">
+      <!-- 分类竖排（右侧） -->
+      <div class="wardrobe-cats">
+        <button class="cat-btn active" data-cat="all" data-i18n="cat_all">全部</button>
+        <button class="cat-btn" data-cat="hair" data-i18n="cat_hair">头发</button>
+        <button class="cat-btn" data-cat="top" data-i18n="cat_top">上衣</button>
+        <button class="cat-btn" data-cat="bottom" data-i18n="cat_bottom">下装</button>
+        <button class="cat-btn" data-cat="dress" data-i18n="cat_dress">连衣裙</button>
+        <button class="cat-btn" data-cat="outer" data-i18n="cat_outer">外套</button>
+        <button class="cat-btn" data-cat="socks" data-i18n="cat_socks">袜子</button>
+        <button class="cat-btn" data-cat="shoes" data-i18n="cat_shoes">鞋子</button>
+        <button class="cat-btn" data-cat="accessory" data-i18n="cat_acc">配饰</button>
+      </div>
+      <!-- 服装网格 -->
+      <div class="wardrobe-items" id="wardrobe-items"></div>
+      <!-- 底部操作 -->
+      <div class="wardrobe-footer">
+        <button class="add-clothes-btn" data-i18n="addClothes">＋ 添加我的衣服</button>
+        <button id="export-clothes-btn" data-i18n="exportClothes" style="background:#8a3b55;color:#fff;border:none;padding:8px 12px;border-radius:8px;cursor:pointer;font-size:13px;">导出衣服</button>
+        <button id="import-clothes-btn" data-i18n="importClothes" style="background:#8a3b55;color:#fff;border:none;padding:8px 12px;border-radius:8px;cursor:pointer;font-size:13px;">导入衣服</button>
+        <button class="close-wardrobe" data-i18n="close">✕ 关闭</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- 隐藏的文件上传 -->
+  <input type="file" id="clothes-upload" accept="image/png,image/*" style="display:none">
+  <input type="file" id="clothes-import" accept="application/json,.json" style="display:none">
+
+  <!-- ========== 商城面板（右侧滑出） ========== -->
+  <div id="shop-panel" class="wardrobe-panel">
+    <div class="wardrobe-inner">
+      <div class="wardrobe-cats">
+        <button class="cat-btn active" data-shop-cat="all" data-i18n="cat_all">全部</button>
+        <button class="cat-btn" data-shop-cat="hair" data-i18n="cat_hair">头发</button>
+        <button class="cat-btn" data-shop-cat="top" data-i18n="cat_top">上衣</button>
+        <button class="cat-btn" data-shop-cat="bottom" data-i18n="cat_bottom">下装</button>
+        <button class="cat-btn" data-shop-cat="dress" data-i18n="cat_dress">连衣裙</button>
+        <button class="cat-btn" data-shop-cat="outer" data-i18n="cat_outer">外套</button>
+        <button class="cat-btn" data-shop-cat="shoes" data-i18n="cat_shoes">鞋子</button>
+        <button class="cat-btn" data-shop-cat="accessory" data-i18n="cat_acc">配饰</button>
+      </div>
+      <div class="wardrobe-items" id="shop-items"></div>
+      <div class="wardrobe-footer">
+        <button class="close-wardrobe" data-i18n="close">✕ 关闭</button>
+      </div>
+    </div>
+  </div>
+
+  <div id="toast" class="toast"></div>
+
+  <script src="js/state.js"></script>
+  <script src="js/items.js"></script>
+  <script src="js/assets.js"></script>
+  <script src="js/renderer.js"></script>
+  <script src="js/wardrobe.js"></script>
+  <script src="js/shop.js"></script>
+  <script src="js/i18n.js"></script>
+  <script src="js/main.js"></script>
+</body>
+</html>
