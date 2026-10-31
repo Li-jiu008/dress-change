@@ -78,9 +78,10 @@
     const grid = $('#wardrobe-items');
     grid.innerHTML = '';
 
-    // 筛选已拥有的物品
+    // 筛选已拥有的物品，排除身体部位类（在身体面板里）
+    const bodyCats = ['hair', 'body', 'eyes', 'pose'];
     let items = Items.getAllItems().filter(function (i) {
-      return save.ownedItems.indexOf(i.id) >= 0;
+      return save.ownedItems.indexOf(i.id) >= 0 && bodyCats.indexOf(i.category) < 0;
     });
 
     // 分类过滤
@@ -121,8 +122,8 @@
       card.appendChild(thumb);
       card.appendChild(name);
 
-      // 每件衣服都加删除(仅自定义)和调整按钮
-      if (item.isCustom) {
+      // 删除按钮：自定义衣服 + 初始拥有的衣服(price=0)
+      if (item.isCustom || item.price === 0) {
         const del = document.createElement('div');
         del.className = 'item-del';
         del.textContent = '✕';
@@ -130,7 +131,25 @@
         del.addEventListener('click', function (e) {
           e.stopPropagation();
           if (!confirm('删除这件衣服？')) return;
-          deleteCustomItem(item.id, save);
+          if (item.isCustom) {
+            deleteCustomItem(item.id, save);
+          } else {
+            // 初始衣服：从 ownedItems 移除
+            save.ownedItems = save.ownedItems.filter(function(id){ return id !== item.id; });
+            State.persistSave(save);
+            // 如果穿着也脱下来
+            Object.keys(save.equipped).forEach(function(k){
+              if (Array.isArray(save.equipped[k])) {
+                save.equipped[k] = save.equipped[k].filter(function(id){ return id !== item.id; });
+              } else if (save.equipped[k] === item.id) {
+                save.equipped[k] = null;
+              }
+            });
+            State.persistSave(save);
+            renderItems();
+            Renderer.renderCharacter($('#character-container'), save);
+            if (window.App && window.App.toast) window.App.toast('已删除');
+          }
         });
         card.appendChild(del);
       }
@@ -221,9 +240,9 @@
       '<label style="display:block;font-size:12px;margin:3px 0;">' + I18N.t('rotation') + ' <span id="adj-rot-v">' + cur.rotate + '°</span></label>' +
       '<input type="range" id="adj-rot" min="-180" max="180" step="1" value="' + cur.rotate + '" style="width:100%;">' +
       '<label style="display:block;font-size:12px;margin:3px 0;">' + I18N.t('leftRight') + ' <span id="adj-x-v">' + cur.x + '</span></label>' +
-      '<input type="range" id="adj-x" min="-50" max="50" step="0.1" value="' + cur.x + '" style="width:100%;">' +
+      '<input type="range" id="adj-x" min="-200" max="200" step="0.1" value="' + cur.x + '" style="width:100%;">' +
       '<label style="display:block;font-size:12px;margin:3px 0;">' + I18N.t('upDown') + ' <span id="adj-y-v">' + cur.y + '</span></label>' +
-      '<input type="range" id="adj-y" min="-50" max="50" step="0.1" value="' + cur.y + '" style="width:100%;">' +
+      '<input type="range" id="adj-y" min="-240" max="240" step="0.1" value="' + cur.y + '" style="width:100%;">' +
       '<div style="display:flex;gap:6px;margin-top:10px;">' +
       '<button id="adj-reset" style="flex:1;padding:7px;border:1px solid #d4719a;background:#fff;color:#d4719a;border-radius:8px;cursor:pointer;font-size:12px;">↺ 重置</button>' +
       '<button id="adj-done" style="flex:1;padding:7px;background:#d4719a;color:#fff;border:none;border-radius:8px;cursor:pointer;font-size:12px;">' + I18N.t('done') + '</button>' +
@@ -327,7 +346,8 @@
           modal.id = 'upload-form-modal';
           modal.style.cssText = 'position:fixed;top:0;left:0;right:0;bottom:0;background:rgba(0,0,0,.4);z-index:100;display:flex;align-items:center;justify-content:center;';
           const cats = [
-            ['hair', '头发'], ['top', '上衣'], ['bottom', '下装'], ['dress', '连衣裙'],
+            ['hair', '头发'], ['body', '人体'], ['eyes', '眼睛'], ['pose', '动作'],
+            ['top', '上衣'], ['bottom', '下装'], ['dress', '连衣裙'],
             ['outer', '外套'], ['socks', '袜子'], ['shoes', '鞋子'],
             ['neckAcc', '颈部配饰'], ['headAcc', '头部配饰'], ['handAcc', '手部配饰']
           ];
@@ -372,8 +392,11 @@
     const exportBtn = document.getElementById('export-clothes-btn');
     if (exportBtn) {
       exportBtn.addEventListener('click', function () {
-        const customs = Items.getCustomItems();
-        if (customs.length === 0) { alert('还没有自定义衣服可导出'); return; }
+        // 导出所有已拥有的衣服（自定义 + 商城购买的）
+        const all = Items.getAllItems().filter(function(it){
+          return window.App && window.App.save && window.App.save.ownedItems.indexOf(it.id) >= 0;
+        });
+        if (all.length === 0) { alert('还没有衣服可导出'); return; }
 
         const old = document.getElementById('export-picker');
         if (old) old.remove();
@@ -383,7 +406,7 @@
 
         let html = '<div style="background:#fff;border-radius:14px;padding:20px;width:340px;max-width:90vw;max-height:80vh;overflow-y:auto;box-shadow:0 8px 30px rgba(0,0,0,.2);">';
         html += '<div style="font-weight:600;color:#8a3b55;margin-bottom:12px;">选择要导出的衣服</div>';
-        customs.forEach(function (item) {
+        all.forEach(function (item) {
           html += '<label style="display:flex;align-items:center;gap:8px;padding:8px;border-bottom:1px solid #f5e6ec;cursor:pointer;">' +
             '<input type="checkbox" class="exp-check" value="' + item.id + '" checked style="width:18px;height:18px;">' +
             '<img src="' + item.src + '" style="width:30px;height:40px;object-fit:contain;">' +
@@ -402,7 +425,7 @@
           if (ids.length === 0) { alert('请至少选一件'); return; }
           const selected = [];
           ids.forEach(function (cb) {
-            const item = customs.find(function (c) { return c.id === cb.value; });
+            const item = all.find(function (c) { return c.id === cb.value; });
             if (item) selected.push(item);
           });
           const blob = new Blob([JSON.stringify(selected, null, 2)], { type: 'application/json' });
@@ -464,6 +487,7 @@
     open: open,
     close: close,
     isOpen: isOpen,
-    renderItems: renderItems
+    renderItems: renderItems,
+    openAdjust: openAdjustPanel
   };
 })();

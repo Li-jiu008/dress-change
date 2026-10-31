@@ -20,7 +20,7 @@
   'use strict';
 
   const LAYER_Z = {
-    bg: 0, hairBack: 10, body: 20, hair: 25, underwear: 30, socks: 40, shoes: 50,
+    bg: 0, hairBack: 10, body: 20, eyes: 22, mouth: 23, hair: 25, underwear: 30, socks: 40, shoes: 50,
     bottom: 60, top: 70, dress: 80, outer: 90, neckAcc: 100,
     hairFront: 110, headAcc: 120, handAcc: 130
   };
@@ -82,7 +82,7 @@
     img.src = file;
     img.onerror = function () {
       this.onerror = null;
-      this.src = Assets.getPlaceholderDataURL(fallbackKey);
+      this.style.display = 'none';
     };
     if (onRealLoad) img.onload = onRealLoad;
     return img;
@@ -96,17 +96,78 @@
     const dressOn = !!eq.dress;
     const frag = document.createDocumentFragment();
 
-    // 常驻后发（真 body.png 自带头发时跳过）
-    if (!realBodyLoaded) {
+    // 常驻后发（真 body.png 自带头发时跳过；用自定义 pose 时也跳过，因为是光头）
+    const useCustomPose = eq.pose && eq.pose !== 'pose_default_real';
+    if (!realBodyLoaded && !useCustomPose) {
       frag.appendChild(makeLayerImg(LAYER_Z.hairBack, FIXED_FILE.hairBack, 'fixed_hairBack', 'hairBack'));
     }
-    // 常驻身体：真图加载成功后标记并重渲染一次（去掉程序发层）
-    frag.appendChild(makeLayerImg(LAYER_Z.body, FIXED_FILE.body, 'fixed_body', 'body', function () {
-      if (!realBodyLoaded) {
+    // 常驻身体：如果穿了 pose（动作），用 pose 图替换 body
+    const poseId = eq.pose;
+    let bodySrc = FIXED_FILE.body;
+    if (poseId && poseId !== 'pose_default_real') {
+      const poseItem = Items.getItem(poseId);
+      if (poseItem) bodySrc = poseItem.src;
+    }
+    const bodyImg = makeLayerImg(LAYER_Z.body, bodySrc, 'fixed_body', 'body', function () {
+      if (!realBodyLoaded && bodySrc === FIXED_FILE.body) {
         realBodyLoaded = true;
         renderCharacter(container, save);
       }
-    }));
+    });
+    bodyImg.style.width = '100%';
+    bodyImg.style.height = '100%';
+    bodyImg.style.objectFit = 'contain';
+    bodyImg.style.objectPosition = 'center bottom';
+    frag.appendChild(bodyImg);
+
+    // 眼睛层（覆盖在脸上）
+    const eyesId = eq.eyes;
+    if (eyesId) {
+      const eyesItem = Items.getItem(eyesId);
+      if (eyesItem) {
+        const eyesImg = makeLayerImg(LAYER_Z.eyes, eyesItem.src, eyesItem.id, eyesItem.name, null, 'eyes', eyesItem.id);
+        eyesImg.style.width = '30%';
+        eyesImg.style.height = 'auto';
+        eyesImg.style.position = 'absolute';
+        eyesImg.style.left = '50%';
+        eyesImg.style.top = '10%';
+        eyesImg.style.objectFit = 'contain';
+        // 保留用户调整的 transform，叠加居中偏移
+        const t = getTransform(eyesItem.id);
+        if (t) {
+          const sx = t.scaleX || 1, sy = t.scaleY || 1, rot = t.rotate || 0;
+          const tx = t.x || 0, ty = t.y || 0;
+          eyesImg.style.transform = 'translate(-50%,' + ty + '%) translate(' + tx + '%,0) scale(' + sx + ',' + sy + ') rotate(' + rot + 'deg)';
+        } else {
+          eyesImg.style.transform = 'translateX(-50%)';
+        }
+        frag.appendChild(eyesImg);
+      }
+    }
+
+    // 嘴
+    const mouthId = eq.mouth;
+    if (mouthId) {
+      const mouthItem = Items.getItem(mouthId);
+      if (mouthItem) {
+        const mouthImg = makeLayerImg(LAYER_Z.mouth, mouthItem.src, mouthItem.id, mouthItem.name, null, 'mouth', mouthItem.id);
+        mouthImg.style.width = '12%';
+        mouthImg.style.height = 'auto';
+        mouthImg.style.position = 'absolute';
+        mouthImg.style.left = '50%';
+        mouthImg.style.top = '16%';
+        mouthImg.style.objectFit = 'contain';
+        const t = getTransform(mouthItem.id);
+        if (t) {
+          const sx = t.scaleX || 1, sy = t.scaleY || 1, rot = t.rotate || 0;
+          const tx = t.x || 0, ty = t.y || 0;
+          mouthImg.style.transform = 'translate(-50%,' + ty + '%) translate(' + tx + '%,0) scale(' + sx + ',' + sy + ') rotate(' + rot + 'deg)';
+        } else {
+          mouthImg.style.transform = 'translateX(-50%)';
+        }
+        frag.appendChild(mouthImg);
+      }
+    }
 
     // 单件层：连衣裙在身时跳过上衣/下装（互斥规则）
     for (let i = 0; i < SINGLE_LAYERS.length; i++) {
@@ -129,8 +190,8 @@
       }
     }
 
-    // 前发最后盖脸（真 body.png 自带头发时跳过）
-    if (!realBodyLoaded) {
+    // 前发最后盖脸（真 body.png 自带头发时跳过；自定义 pose 光头也跳过）
+    if (!realBodyLoaded && !useCustomPose) {
       frag.appendChild(makeLayerImg(LAYER_Z.hairFront, FIXED_FILE.hairFront, 'fixed_hairFront', 'hairFront'));
     }
 

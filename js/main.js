@@ -44,7 +44,7 @@
 
   function init() {
     // 版本号变更时强制清空旧存档和自定义衣服
-    const SAVE_VERSION = 'v4_no_builtin';
+    const SAVE_VERSION = 'v5_no_builtin';
     if (localStorage.getItem('dressup_version') !== SAVE_VERSION) {
       localStorage.removeItem('dressup_save_v2');
       localStorage.removeItem('dressup_custom_items');
@@ -55,7 +55,7 @@
     updateCoinHUD();
 
     // 金币计时：每 10 秒 +1 金币，离线挂机最多补 100 金币
-    const COIN_INTERVAL = 10 * 1000;       // 10 秒
+    const COIN_INTERVAL = 4 * 1000;       // 4 秒 = 每分钟15金币
     const OFFLINE_CAP = 100;              // 离线最多补 100
     // 离线补算
     const elapsed = Date.now() - (app.save.lastCoinTick || Date.now());
@@ -109,6 +109,134 @@
     $('#btn-goout').onclick = function(e) { e.stopPropagation(); goOut(); };
     initCharSettings();
 
+    // 身体面板（像衣柜一样竖排展示）
+    $('#btn-body').addEventListener('click', function () {
+      let panel = document.getElementById('body-panel');
+      if (panel) { panel.remove(); document.body.classList.remove('panel-open'); return; }
+      document.body.classList.add('panel-open');
+      panel = document.createElement('div');
+      panel.id = 'body-panel';
+      panel.className = 'wardrobe-panel';
+      panel.style.cssText = 'position:fixed;top:0;right:0;width:420px;max-width:85vw;height:100vh;background:#fff8fb;z-index:70;box-shadow:-4px 0 24px rgba(0,0,0,.12);transform:translateX(0);transition:transform .3s;display:flex;flex-direction:column;';
+
+      const cats = [
+        ['hair', '头发'],
+        ['eyes', '眼睛'],
+        ['mouth', '嘴'],
+        ['pose', '动作与人体']
+      ];
+
+      let html = '<div style="padding:16px;border-bottom:1px solid #f0e6ec;display:flex;justify-content:space-between;align-items:center;">' +
+        '<div style="font-size:16px;font-weight:600;color:#333;">身体设定</div>' +
+        '<button id="body-close" style="background:none;border:none;font-size:18px;cursor:pointer;color:#999;">✕</button></div>';
+      html += '<div style="padding:16px;overflow-y:auto;flex:1;">';
+      html += '<div style="display:flex;gap:0;margin-bottom:16px;border-bottom:2px solid #f0e6ec;">';
+      cats.forEach(function(c, i) {
+        const active = i === 0;
+        html += '<button data-body-cat="' + c[0] + '" style="flex:1;padding:10px 0;background:none;border:none;border-bottom:2px solid ' + (active ? '#d4719a' : 'transparent') + ';color:' + (active ? '#d4719a' : '#999') + ';cursor:pointer;font-size:13px;font-weight:500;margin-bottom:-2px;">' + c[1] + '</button>';
+      });
+      html += '</div>';
+      html += '<div id="body-grid" style="display:grid;grid-template-columns:repeat(3,1fr);gap:10px;"></div>';
+      html += '<button id="body-add" style="margin-top:16px;width:100%;padding:11px;background:#d4719a;color:#fff;border:none;border-radius:8px;cursor:pointer;font-size:14px;font-weight:500;">+ 添加</button>';
+      html += '</div>';
+      panel.innerHTML = html;
+      document.body.appendChild(panel);
+
+      let curBodyCat = 'hair';
+      // 确保所有动作在拥有列表里
+      ['pose_default_real','pose_stand_02','pose_walk_01','pose_hip_01','pose_cross_01','eyes_brown_01'].forEach(function(pid){
+        if (window.App.save.ownedItems.indexOf(pid) < 0) {
+          window.App.save.ownedItems.push(pid);
+        }
+      });
+      if (!window.App.save.equipped.pose) window.App.save.equipped.pose = 'pose_default_real';
+      State.persistSave(window.App.save);
+      function renderBodyGrid() {
+        const grid = panel.querySelector('#body-grid');
+        const items = Items.getAllItems().filter(function(i){
+          return app.save.ownedItems.indexOf(i.id) >= 0 && i.category === curBodyCat;
+        });
+        if (items.length === 0) {
+          grid.innerHTML = '';
+        } else {
+          grid.innerHTML = '';
+        }
+        //  always show "无" option to remove
+        const noneCard = document.createElement('div');
+        noneCard.style.cssText = 'aspect-ratio:3/4;border:2px dashed ' + (app.save.equipped[curBodyCat] ? '#ddd' : '#d4719a') + ';border-radius:8px;display:flex;align-items:center;justify-content:center;cursor:pointer;color:#999;font-size:12px;background:#fafafa;';
+        noneCard.textContent = '无';
+        noneCard.onclick = function() {
+          app.save.equipped[curBodyCat] = null;
+          State.persistSave(app.save);
+          Renderer.renderCharacter($('#character-container'), app.save);
+          renderBodyGrid();
+        };
+        grid.appendChild(noneCard);
+        items.forEach(function(item) {
+            const card = document.createElement('div');
+            const isActive = app.save.equipped[item.category] === item.id;
+            card.style.cssText = 'aspect-ratio:3/4;border:2px solid ' + (isActive ? '#d4719a' : '#f0d0dc') + ';border-radius:8px;overflow:hidden;cursor:pointer;background:#fff;display:flex;align-items:center;justify-content:center;';
+            const img = document.createElement('img');
+            img.src = item.src;
+            img.style.cssText = 'max-width:100%;max-height:100%;object-fit:contain;';
+            card.appendChild(img);
+            card.onclick = function() {
+              app.save.equipped[item.category] = item.id;
+              State.persistSave(app.save);
+              Renderer.renderCharacter($('#character-container'), app.save);
+              renderBodyGrid();
+            };
+            const adjBtn = document.createElement('button');
+            adjBtn.textContent = '⚙';
+            adjBtn.style.cssText = 'position:absolute;top:2px;right:2px;width:20px;height:20px;border-radius:50%;border:none;background:rgba(255,255,255,.9);cursor:pointer;font-size:11px;line-height:1;';
+            card.style.position = 'relative';
+            adjBtn.onclick = function(e) {
+              e.stopPropagation();
+              if (window.Wardrobe) window.Wardrobe.openAdjust(item, app.save);
+            };
+            card.appendChild(adjBtn);
+            const delBtn = document.createElement('button');
+            delBtn.textContent = '✕';
+            delBtn.style.cssText = 'position:absolute;bottom:2px;right:2px;width:18px;height:18px;border-radius:50%;border:none;background:rgba(255,100,100,.9);color:#fff;cursor:pointer;font-size:10px;line-height:1;';
+            delBtn.onclick = function(e) {
+              e.stopPropagation();
+              if (!confirm('删除这个' + item.name + '？')) return;
+              app.save.ownedItems = app.save.ownedItems.filter(function(x){ return x !== item.id; });
+              if (app.save.equipped[item.category] === item.id) app.save.equipped[item.category] = null;
+              // 删除自定义项
+              if (item.isCustom) {
+                const customs = JSON.parse(localStorage.getItem('dressup_custom_items') || '[]');
+                localStorage.setItem('dressup_custom_items', JSON.stringify(customs.filter(function(c){ return c.id !== item.id; })));
+              }
+              State.persistSave(app.save);
+              Renderer.renderCharacter($('#character-container'), app.save);
+              renderBodyGrid();
+            };
+            card.appendChild(delBtn);
+            grid.appendChild(card);
+          });
+      }
+      renderBodyGrid();
+
+      panel.querySelectorAll('[data-body-cat]').forEach(function(btn) {
+        btn.onclick = function() {
+          curBodyCat = btn.getAttribute('data-body-cat');
+          panel.querySelectorAll('[data-body-cat]').forEach(function(b){
+            b.style.borderBottom = '2px solid transparent'; b.style.color = '#999';
+          });
+          btn.style.borderBottom = '2px solid #d4719a'; btn.style.color = '#d4719a';
+          renderBodyGrid();
+        };
+      });
+
+      panel.querySelector('#body-close').onclick = function() { panel.remove(); document.body.classList.remove('panel-open'); };
+      panel.querySelector('#body-add').onclick = function() {
+        const fi = document.getElementById('clothes-upload');
+        fi.value = '';
+        fi.click();
+      };
+    });
+
     // 五个随机地点
     const LOCATIONS = [
       { id: 'cafe',    bg: 'assets/backgrounds/cafe.png',    emoji: '☕', nameKey: 'loc_cafe' },
@@ -161,8 +289,9 @@
       goingOut = true;
       const roomBg = $('#room-bg');
       roomBg.style.backgroundImage = 'url("' + loc.bg + '")';
-      roomBg.style.backgroundSize = 'cover';
+      roomBg.style.backgroundSize = '80% auto';
       roomBg.style.backgroundPosition = 'center bottom';
+      roomBg.style.backgroundRepeat = 'no-repeat';
 
       $('#btn-wardrobe').style.display = 'none';
       $('#btn-shop').style.display = 'none';
@@ -229,11 +358,11 @@
       panel.innerHTML =
         '<div style="font-weight:600;margin-bottom:6px;color:#8a3b55;">⚙ 人物设置</div>' +
         '<label style="display:block;margin:4px 0;">大小 <span id="cs-scale-v">' + cfg.scale.toFixed(2) + '</span></label>' +
-        '<input type="range" id="cs-scale" min="0.5" max="2" step="0.01" value="' + cfg.scale + '" style="width:100%;">' +
+        '<input type="range" id="cs-scale" min="0.3" max="3" step="0.01" value="' + cfg.scale + '" style="width:100%;">' +
         '<label style="display:block;margin:4px 0;">左右 <span id="cs-x-v">' + cfg.x.toFixed(1) + '</span></label>' +
-        '<input type="range" id="cs-x" min="-100" max="100" step="1" value="' + cfg.x + '" style="width:100%;">' +
+        '<input type="range" id="cs-x" min="-400" max="400" step="1" value="' + cfg.x + '" style="width:100%;">' +
         '<label style="display:block;margin:4px 0;">上下 <span id="cs-y-v">' + cfg.y.toFixed(1) + '</span></label>' +
-        '<input type="range" id="cs-y" min="-100" max="100" step="1" value="' + cfg.y + '" style="width:100%;">' +
+        '<input type="range" id="cs-y" min="-400" max="400" step="1" value="' + cfg.y + '" style="width:100%;">' +
         '<button id="cs-reset" style="margin-top:8px;padding:5px 12px;border:1px solid #d4719a;background:#fff;color:#d4719a;border-radius:6px;cursor:pointer;">重置</button>' +
         '<button id="cs-close" style="margin-top:8px;margin-left:6px;padding:5px 12px;background:#d4719a;color:#fff;border:none;border-radius:6px;cursor:pointer;">关闭</button>';
       document.body.appendChild(panel);

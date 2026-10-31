@@ -17,9 +17,9 @@
   function makeDefaultSave() {
     const now = Date.now();
     return {
-      coins: 100,
+      coins: 200,
       lastCoinTick: now,
-      ownedItems: [],
+      ownedItems: ['jeans_light_01', 'sweater_yellow_01', 'dress_lightblue_01', 'shoes_white_01', 'socks_white_01', 'pose_default_01'],
       equipped: {
         top: null,
         bottom: null,
