@@ -19,6 +19,7 @@
   function open() {
     $('#wardrobe-panel').classList.add('open');
     document.body.classList.add('panel-open');
+    ensureDeduped();
     renderItems();
   }
 
@@ -305,6 +306,197 @@
     adj.querySelector('#adj-done').onclick = function () { adj.remove(); };
   }
 
+  // ===== 导入去重：同一件衣服只保留一个 =====
+  function normName(s) { return String(s || '').trim().toLowerCase(); }
+
+  // 判断两件衣服是否“同一件”：id相同 / 图片完全相同 / 同分类且同名（名字为空不算）
+  function isSameItem(a, b) {
+    if (!a || !b) return false;
+    if (a.id && b.id && a.id === b.id) return true;
+    if (a.src && b.src && a.src === b.src) return true;
+    const na = normName(a.name);
+    const nb = normName(b.name);
+    return !!(na && nb && a.category === b.category && na === nb);
+  }
+
+  // 找内置里同款的衣服（内置优先，避免出现两张一样的卡片）
+  function findBuiltin(item) {
+    const builtins = (Items.ITEMS || []).filter(function (i) { return !i.isCustom; });
+    for (let i = 0; i < builtins.length; i++) {
+      if (isSameItem(builtins[i], item)) return builtins[i];
+    }
+    return null;
+  }
+
+  // 把已装备/已引用的旧 id 改指向保留的那一件（equipped 里可能是数组）
+  function remapRefs(save, oldIds, keepId) {
+    if (!save) return;
+    if (!save.equipped) save.equipped = {};
+    Object.keys(save.equipped).forEach(function (k) {
+      const v = save.equipped[k];
+      if (Array.isArray(v)) {
+        let changed = false;
+        v.forEach(function (id, i) { if (oldIds.indexOf(id) >= 0) { v[i] = keepId; changed = true; } });
+        if (changed) {
+          save.equipped[k] = v.filter(function (id, i) { return v.indexOf(id) === i; });
+        }
+      } else if (v && oldIds.indexOf(v) >= 0) {
+        save.equipped[k] = keepId;
+      }
+    });
+    const transforms = JSON.parse(localStorage.getItem('dressup_transforms') || '{}');
+    let changed = false;
+    oldIds.forEach(function (oldId) {
+      if (oldId === keepId) return;
+      if (transforms[oldId]) {
+        if (!transforms[keepId]) transforms[keepId] = transforms[oldId];
+        delete transforms[oldId];
+        changed = true;
+      }
+    });
+    if (changed) localStorage.setItem('dressup_transforms', JSON.stringify(transforms));
+  }
+
+  // 把重复项并到保留项：拥有状态、穿戴、调整参数一起转移
+  function mergeInto(save, dupIds, keepId) {
+    if (!save) return;
+    const wasOwned = save.ownedItems.indexOf(keepId) >= 0 ||
+      dupIds.some(function (id) { return save.ownedItems.indexOf(id) >= 0; });
+    save.ownedItems = save.ownedItems.filter(function (id) {
+      return dupIds.indexOf(id) < 0 || id === keepId;
+    });
+    save.ownedItems = save.ownedItems.filter(function (id, i) {
+      return save.ownedItems.indexOf(id) === i;
+    });
+    if (wasOwned && save.ownedItems.indexOf(keepId) < 0) save.ownedItems.push(keepId);
+    remapRefs(save, dupIds.filter(function (id) { return id !== keepId; }), keepId);
+  }
+
+  /**
+   * 写入一件自定义服装（自动替换去重）
+   * 已存在同一件 → 覆盖内容、保留原 id（存档引用不变），并清掉其余重复项
+   * 返回 { id, replaced: bool, removed: number }
+   */
+  function upsertCustomItem(item) {
+    const save = window.App && window.App.save ? window.App.save : null;
+    const customs = Items.getCustomItems();
+
+    // 1) 跟内置衣服同款 → 不另存副本，只认内置那一件
+    const builtin = findBuiltin(item);
+    if (builtin) {
+      const dupIds = [];
+      customs.forEach(function (c) {
+        if (isSameItem(c, item) || isSameItem(c, builtin)) dupIds.push(c.id);
+      });
+      if (dupIds.length) {
+        localStorage.setItem('dressup_custom_items', JSON.stringify(
+          customs.filter(function (c) { return dupIds.indexOf(c.id) < 0; })
+        ));
+      }
+      if (save) mergeInto(save, dupIds, builtin.id);
+      if (builtin.id !== item.id && save && save.ownedItems.indexOf(builtin.id) < 0) {
+        save.ownedItems.push(builtin.id);
+      }
+      return { id: builtin.id, replaced: true, removed: dupIds.length, merged: true };
+    }
+
+    // 2) 跟已有自定义衣服同款 → 覆盖内容、保留原 id
+    let idx = -1;
+    for (let i = 0; i < customs.length; i++) {
+      if (isSameItem(customs[i], item)) { idx = i; break; }
+    }
+
+    if (idx >= 0) {
+      const target = customs[idx];
+      const keepId = target.id || item.id;
+      Object.keys(item).forEach(function (k) {
+        if (k !== 'id') target[k] = item[k];
+      });
+      target.id = keepId;
+      target.isCustom = true;
+
+      const removedIds = [];
+      const kept = [];
+      customs.forEach(function (c, i) {
+        if (i === idx) { kept.push(c); return; }
+        if (isSameItem(c, target)) { removedIds.push(c.id); return; }
+        kept.push(c);
+      });
+      localStorage.setItem('dressup_custom_items', JSON.stringify(kept));
+
+      if (save) {
+        if (save.ownedItems.indexOf(keepId) < 0) save.ownedItems.push(keepId);
+        mergeInto(save, removedIds, keepId);
+      }
+      return { id: keepId, replaced: true, removed: removedIds.length };
+    }
+
+    // 3) 全新 → 新增
+    customs.push(item);
+    localStorage.setItem('dressup_custom_items', JSON.stringify(customs));
+    if (save && save.ownedItems.indexOf(item.id) < 0) save.ownedItems.push(item.id);
+    return { id: item.id, replaced: false, removed: 0 };
+  }
+
+  /**
+   * 启动时清理历史遗留重复：内置优先，其余按“同图 / 同分类同名”合并
+   * 返回被清理掉的件数
+   */
+  function dedupeAllItems() {
+    const save = window.App && window.App.save ? window.App.save : null;
+    if (!save) return 0;
+
+    const customs = Items.getCustomItems();
+    if (!customs.length) return 0;
+
+    const kept = [];
+    const mergedMap = {};
+    let changed = false;
+
+    customs.forEach(function (c) {
+      // 跟内置同款（含同 id 的影子副本）→ 丢掉副本，认内置
+      const builtin = findBuiltin(c);
+      if (builtin) {
+        mergedMap[c.id] = builtin.id;
+        changed = true;
+        return;
+      }
+      // 跟前面保留的自定义同款 → 丢掉，认前面那件
+      for (let i = 0; i < kept.length; i++) {
+        if (isSameItem(kept[i], c)) {
+          mergedMap[c.id] = kept[i].id;
+          changed = true;
+          return;
+        }
+      }
+      kept.push(c);
+    });
+
+    if (!changed) return 0;
+
+    localStorage.setItem('dressup_custom_items', JSON.stringify(kept));
+
+    const dupIds = [];
+    Object.keys(mergedMap).forEach(function (dupId) {
+      const keepId = mergedMap[dupId];
+      if (dupId === keepId) {
+        // 同 id 的影子副本：只清 ownedItems 里的多余记录
+        return;
+      }
+      dupIds.push(dupId);
+      mergeInto(save, [dupId], keepId);
+    });
+
+    // 同 id 影子副本：确保 ownedItems 里不重复
+    save.ownedItems = save.ownedItems.filter(function (id, i) {
+      return save.ownedItems.indexOf(id) === i;
+    });
+
+    return dupIds.length + Object.keys(mergedMap).filter(function (d) {
+      return mergedMap[d] === d;
+    }).length;
+  }
+
   // 分类按钮切换
   function bindCats() {
     document.querySelectorAll('.cat-btn').forEach(function (btn) {
@@ -319,7 +511,29 @@
     });
   }
 
+  let dedupeDone = false;
+  // 存档就绪后清一次历史重复（等 main.js 初始化完再跑）
+  function ensureDeduped() {
+    if (dedupeDone) return;
+    if (!(window.App && window.App.save)) return;
+    dedupeDone = true;
+    try {
+      const cleaned = dedupeAllItems();
+      if (cleaned > 0) {
+        State.persistSave(window.App.save);
+        const box = document.getElementById('character-container');
+        if (box) Renderer.renderCharacter(box, window.App.save);
+      }
+    } catch (err) {
+      console.warn('清理重复衣服失败：', err);
+    }
+  }
+
   function init() {
+    // 先清理历史遗留的重复衣服（导入时把商城已购的又存了一份）
+    ensureDeduped();
+    setTimeout(ensureDeduped, 0);
+
     bindCats();
 
     // 关闭按钮
@@ -372,14 +586,14 @@
             const cat = modal.querySelector('#uf-cat').value;
             modal.remove();
             const id = 'custom_' + Date.now();
-            const customs = JSON.parse(localStorage.getItem('dressup_custom_items') || '[]');
-            customs.push({ id: id, name: name, category: cat, price: 0, src: dataUrl, isCustom: true });
-            localStorage.setItem('dressup_custom_items', JSON.stringify(customs));
+            // 已有同一件（同图 / 同分类同名）→ 覆盖替换，只留一个
+            const res = upsertCustomItem({ id: id, name: name, category: cat, price: 0, src: dataUrl, isCustom: true });
             if (window.App && window.App.save) {
-              window.App.save.ownedItems.push(id);
               State.persistSave(window.App.save);
             }
-            if (window.App && window.App.toast) window.App.toast('addClothesSuccess');
+            if (window.App && window.App.toast) {
+              window.App.toast(res.replaced ? '已替换原有的一件，只保留一个' : 'addClothesSuccess');
+            }
             renderItems();
           };
         };
@@ -452,24 +666,26 @@
           try {
             const imported = JSON.parse(ev.target.result);
             if (!Array.isArray(imported)) throw new Error('格式错误');
-            const existing = Items.getCustomItems();
-            // 合并，避免 id 重复
-            const ids = new Set(existing.map(function (i) { return i.id; }));
             let added = 0;
+            let replaced = 0;
+            let removed = 0;
             for (const it of imported) {
-              if (!ids.has(it.id)) { existing.push(it); added++; }
+              if (!it || !it.src) continue;
+              const res = upsertCustomItem({
+                id: it.id || ('custom_' + Date.now() + '_' + Math.floor(Math.random() * 1000)),
+                name: it.name || '自定义衣服',
+                category: it.category || 'top',
+                price: 0,
+                src: it.src,
+                isCustom: true
+              });
+              if (res.replaced) { replaced++; removed += res.removed; } else { added++; }
             }
-            localStorage.setItem('dressup_custom_items', JSON.stringify(existing));
-            // 把导入的衣服加入 ownedItems
-            if (window.App && window.App.save) {
-              for (const it of imported) {
-                if (window.App.save.ownedItems.indexOf(it.id) < 0) {
-                  window.App.save.ownedItems.push(it.id);
-                }
-              }
-              State.persistSave(window.App.save);
-            }
-            alert('成功导入 ' + added + ' 件衣服');
+            if (window.App && window.App.save) State.persistSave(window.App.save);
+            let msg = '导入完成：新增 ' + added + ' 件';
+            if (replaced > 0) msg += '，替换已有 ' + replaced + ' 件';
+            if (removed > 0) msg += '，清理重复 ' + removed + ' 件';
+            alert(msg);
             renderItems();
           } catch (err) {
             alert('导入失败：' + err.message);
