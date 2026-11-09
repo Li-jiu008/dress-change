@@ -88,6 +88,109 @@
     return img;
   }
 
+  // ===== 光影：每个图层单独叠一层“遮罩光” =====
+  // 用同款图的透明轮廓做 mask，渐变就只落在人物的形状上，
+  // 不会在透明区域留方块。强度由 --light-i 控制，可在人物设置里调。
+  const LIGHT_DEFAULT = 0.8;
+
+  function getLightIntensity() {
+    try {
+      const cfg = JSON.parse(localStorage.getItem('dressup_char_cfg') || '{}');
+      if (typeof cfg.light === 'number' && isFinite(cfg.light)) {
+        return Math.max(0, Math.min(1, cfg.light));
+      }
+    } catch (e) {}
+    return LIGHT_DEFAULT;
+  }
+
+  function syncShadeBox(shade, img) {
+    shade.style.left = img.offsetLeft + 'px';
+    shade.style.top = img.offsetTop + 'px';
+    shade.style.width = img.offsetWidth + 'px';
+    shade.style.height = img.offsetHeight + 'px';
+    shade.style.transform = img.style.transform || 'none';
+    shade.style.transformOrigin = img.style.transformOrigin || 'center center';
+    shade.style.zIndex = img.style.zIndex || '0';
+  }
+
+  function maskUrlFor(src) {
+    const masks = window.CHAR_MASKS;
+    if (masks) {
+      const norm = String(src).replace(/^\.?\//, '');
+      if (masks[norm]) return masks[norm];
+      const hit = Object.keys(masks).filter(function (k) {
+        return k === norm || k.slice(-norm.length) === norm;
+      })[0];
+      if (hit) return masks[hit];
+      // 没有预生成剪影的素材（比如新上传的）就不打光，宁可不加也别糊一片
+      return null;
+    }
+    // 兜底：http(s) 环境下可以直接用原图当遮罩
+    return 'url("' + src.replace(/"/g, '%22') + '")';
+  }
+
+  function makeShade(img) {
+    const src = img.getAttribute('src');
+    if (!src) return null;
+    const maskUrl = maskUrlFor(src);
+    if (!maskUrl) return null;
+
+    const shade = document.createElement('div');
+    shade.className = 'char-shade';
+    shade.style.cssText =
+      'position:absolute;pointer-events:none;opacity:var(--light-i,' + LIGHT_DEFAULT + ');' +
+      // 三层叠加：头顶高光 + 右侧轮廓暗部 + 上亮下暗的整体衰减
+      'background:' +
+        'radial-gradient(58% 22% at 46% 9%,rgba(255,248,235,.38),rgba(255,251,244,0) 74%),' +
+        'linear-gradient(to right,rgba(255,255,255,0) 52%,rgba(74,42,56,.16) 100%),' +
+        'linear-gradient(to bottom,rgba(255,252,246,.18) 0%,rgba(255,255,255,0) 30%,rgba(255,255,255,0) 72%,rgba(70,38,52,.20) 100%);';
+
+    // 遮罩：预生成剪影（data URL，file:// 下也能用）
+    shade.style.webkitMaskImage = 'url("' + maskUrl + '")';
+    shade.style.maskImage = 'url("' + maskUrl + '")';
+    shade.style.webkitMaskRepeat = 'no-repeat';
+    shade.style.maskRepeat = 'no-repeat';
+
+    const fit = img.style.objectFit || 'contain';
+    const size = fit === 'cover' ? 'cover' : (fit === 'none' ? 'auto' : 'contain');
+    const pos = img.style.objectPosition || 'center center';
+    shade.style.webkitMaskSize = size;
+    shade.style.maskSize = size;
+    shade.style.webkitMaskPosition = pos;
+    shade.style.maskPosition = pos;
+
+    syncShadeBox(shade, img);
+    // 图片尺寸要等加载完才知道（眼睛/嘴是 height:auto）
+    if (!img.complete && img.addEventListener) {
+      img.addEventListener('load', function () { syncShadeBox(shade, img); });
+    }
+    return shade;
+  }
+
+  function applyLighting(container) {
+    if (!container) return;
+    const intensity = getLightIntensity();
+    container.style.setProperty('--light-i', String(intensity));
+
+    const layers = container.querySelectorAll('.char-layer');
+    for (let i = 0; i < layers.length; i++) {
+      const img = layers[i];
+      if (img.style.display === 'none') continue;
+      const shade = makeShade(img);
+      if (shade && img.parentNode) img.parentNode.insertBefore(shade, img.nextSibling);
+    }
+
+    // 脚下落地投影，让人“站”在背景上
+    const ground = document.createElement('div');
+    ground.className = 'char-ground';
+    ground.style.cssText =
+      'position:absolute;left:50%;bottom:2%;width:50%;height:8%;' +
+      'transform:translateX(-50%);pointer-events:none;z-index:15;' +
+      'background:radial-gradient(closest-side,rgba(78,42,58,.55),rgba(78,42,58,0) 80%);' +
+      'filter:blur(6px);opacity:var(--light-i,' + LIGHT_DEFAULT + ');';
+    container.appendChild(ground);
+  }
+
   function renderCharacter(container, save) {
     if (!container) return;
     container.innerHTML = '';
@@ -196,11 +299,17 @@
     }
 
     container.appendChild(frag);
+    applyLighting(container);
   }
 
   window.Renderer = {
     renderCharacter: renderCharacter,
     LAYER_Z: LAYER_Z,
-    FIXED_FILE: FIXED_FILE
+    FIXED_FILE: FIXED_FILE,
+    applyLighting: applyLighting,
+    setLightIntensity: function (v) {
+      const box = document.getElementById('character-container');
+      if (box) box.style.setProperty('--light-i', String(Math.max(0, Math.min(1, v))));
+    }
   };
 })();

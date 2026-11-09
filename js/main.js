@@ -341,13 +341,14 @@
     let panel = null;
 
     function getCharCfg() {
-      return Object.assign({ scale: 1, x: 0, y: 0 }, JSON.parse(localStorage.getItem('dressup_char_cfg') || '{}'));
+      return Object.assign({ scale: 1, x: 0, y: 0, light: 0.8 }, JSON.parse(localStorage.getItem('dressup_char_cfg') || '{}'));
     }
     function applyCfg(cfg) {
       const c = $('#character-container');
       if (!c) return;
       const panelShift = document.body.classList.contains('panel-open') ? -210 : 0;
       c.style.transform = 'translateX(calc(-50% + ' + panelShift + 'px)) scale(' + cfg.scale + ') translate(' + cfg.x + 'px,' + cfg.y + 'px)';
+      c.style.setProperty('--light-i', String(typeof cfg.light === 'number' ? cfg.light : 0.8));
     }
 
     btn.onclick = function () {
@@ -363,6 +364,8 @@
         '<input type="range" id="cs-x" min="-400" max="400" step="1" value="' + cfg.x + '" style="width:100%;">' +
         '<label style="display:block;margin:4px 0;">上下 <span id="cs-y-v">' + cfg.y.toFixed(1) + '</span></label>' +
         '<input type="range" id="cs-y" min="-400" max="400" step="1" value="' + cfg.y + '" style="width:100%;">' +
+        '<label style="display:block;margin:4px 0;">光影 <span id="cs-light-v">' + Math.round((cfg.light === undefined ? 0.8 : cfg.light) * 100) + '%</span></label>' +
+        '<input type="range" id="cs-light" min="0" max="100" step="1" value="' + Math.round((cfg.light === undefined ? 0.8 : cfg.light) * 100) + '" style="width:100%;">' +
         '<button id="cs-reset" style="margin-top:8px;padding:5px 12px;border:1px solid #d4719a;background:#fff;color:#d4719a;border-radius:6px;cursor:pointer;">重置</button>' +
         '<button id="cs-close" style="margin-top:8px;margin-left:6px;padding:5px 12px;background:#d4719a;color:#fff;border:none;border-radius:6px;cursor:pointer;">关闭</button>';
       document.body.appendChild(panel);
@@ -371,21 +374,25 @@
         const c = {
           scale: parseFloat(panel.querySelector('#cs-scale').value),
           x: parseFloat(panel.querySelector('#cs-x').value),
-          y: parseFloat(panel.querySelector('#cs-y').value)
+          y: parseFloat(panel.querySelector('#cs-y').value),
+          light: parseFloat(panel.querySelector('#cs-light').value) / 100
         };
         panel.querySelector('#cs-scale-v').textContent = c.scale.toFixed(2);
         panel.querySelector('#cs-x-v').textContent = c.x.toFixed(1);
         panel.querySelector('#cs-y-v').textContent = c.y.toFixed(1);
+        panel.querySelector('#cs-light-v').textContent = Math.round(c.light * 100) + '%';
         localStorage.setItem('dressup_char_cfg', JSON.stringify(c));
         applyCfg(c);
       }
       panel.querySelector('#cs-scale').oninput = upd;
       panel.querySelector('#cs-x').oninput = upd;
       panel.querySelector('#cs-y').oninput = upd;
+      panel.querySelector('#cs-light').oninput = upd;
       panel.querySelector('#cs-reset').onclick = function () {
         panel.querySelector('#cs-scale').value = 1;
         panel.querySelector('#cs-x').value = 0;
         panel.querySelector('#cs-y').value = 0;
+        panel.querySelector('#cs-light').value = 80;
         upd();
       };
       panel.querySelector('#cs-close').onclick = function () { panel.remove(); panel = null; };

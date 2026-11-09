@@ -393,9 +393,10 @@
           customs.filter(function (c) { return dupIds.indexOf(c.id) < 0; })
         ));
       }
-      if (save) mergeInto(save, dupIds, builtin.id);
-      if (builtin.id !== item.id && save && save.ownedItems.indexOf(builtin.id) < 0) {
-        save.ownedItems.push(builtin.id);
+      if (save) {
+        mergeInto(save, dupIds, builtin.id);
+        // 收到礼物时可能还没有这件商品：直接补上拥有状态
+        if (save.ownedItems.indexOf(builtin.id) < 0) save.ownedItems.push(builtin.id);
       }
       return { id: builtin.id, replaced: true, removed: dupIds.length, merged: true };
     }
@@ -697,6 +698,40 @@
     }
   }
 
+  /**
+   * 收到礼物：把一批衣服并进衣柜（复用同一套去重规则）
+   * 内置商品→直接标记拥有；自定义图→覆盖或新增
+   */
+  function receiveItems(items) {
+    const save = window.App && window.App.save ? window.App.save : null;
+    const result = { added: 0, replaced: 0, merged: 0 };
+    if (!save || !Array.isArray(items)) return result;
+
+    items.forEach(function (it, idx) {
+      if (!it || !it.src) return;
+      const src = String(it.src);
+      // 只接受本地资源路径或图片 dataURL，避免怪异来源
+      if (!/^assets\//.test(src) && !/^data:image\//.test(src)) return;
+      const res = upsertCustomItem({
+        id: it.id || ('custom_' + Date.now() + '_' + idx),
+        name: it.name || '礼物',
+        category: it.category || 'top',
+        price: 0,
+        src: src,
+        isCustom: true
+      });
+      if (res.merged) result.merged++;
+      else if (res.replaced) result.replaced++;
+      else result.added++;
+    });
+
+    State.persistSave(save);
+    renderItems();
+    const box = document.getElementById('character-container');
+    if (box) Renderer.renderCharacter(box, save);
+    return result;
+  }
+
   document.addEventListener('DOMContentLoaded', init);
 
   window.Wardrobe = {
@@ -704,6 +739,7 @@
     close: close,
     isOpen: isOpen,
     renderItems: renderItems,
-    openAdjust: openAdjustPanel
+    openAdjust: openAdjustPanel,
+    receiveItems: receiveItems
   };
 })();
