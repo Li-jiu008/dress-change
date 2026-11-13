@@ -176,7 +176,8 @@
             '<div style="font-size:14px;font-weight:600;color:#4a2b38;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">' + escapeHtml(f.name || f.id) + '</div>' +
             '<div style="font-size:11px;color:#b08a9b;letter-spacing:.5px;">' + escapeHtml(f.id) + '</div>' +
           '</div>' +
-          '<button data-gift="' + i + '" style="' + S.btnPrimary + '">' + t('sendGift') + '</button>' +
+          '<button data-chat="' + i + '" style="' + S.btnPrimary + '">💬</button>' +
+          '<button data-gift="' + i + '" style="' + S.btnGhost + '">' + t('sendGift') + '</button>' +
           '<button data-del="' + i + '" style="' + S.btnDanger + '">' + t('del') + '</button>' +
         '</div>';
       }).join('');
@@ -236,6 +237,7 @@
       a.name = this.value.trim() || a.name;
       saveAccount(a);
       toast(t('nameSaved'));
+      if (window.Cloud && Cloud.configured()) Cloud.registerCode(a.id, a.name);
     };
     panel.querySelector('#fr-add-btn').onclick = function () {
       const input = panel.querySelector('#fr-add-input');
@@ -256,6 +258,13 @@
         list.splice(i, 1);
         saveFriends(list);
         buildPanel();
+      };
+    });
+    panel.querySelectorAll('[data-chat]').forEach(function (btn) {
+      btn.onclick = function () {
+        const i = Number(this.getAttribute('data-chat'));
+        const f = loadFriends()[i];
+        if (window.Chat) Chat.open(f);
       };
     });
     panel.querySelectorAll('[data-gift]').forEach(function (btn) {
@@ -430,6 +439,8 @@
   window.Friends = {
     open: open,
     close: close,
+    account: ensureAccount,
+    list: loadFriends,
     _debug: { parseFriendCode: parseFriendCode, packGift: packGift, giftToCode: giftToCode, parseGift: parseGift }
   };
 })();

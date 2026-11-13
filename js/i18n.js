@@ -91,7 +91,23 @@
       pieces: '件',
       giftHint: '把你上面这串码发给朋友，她加你之后你就能给她送礼；反过来也一样。',
       del: '删除',
-      langBtn: 'IT'
+      langBtn: 'IT',
+      photo: '拍照',
+      photoSaved: '照片已保存～',
+      photoFail: '浏览器不允许本地导出图片，请用线上版本拍照',
+      chatOnline: '实时连接中',
+      chatOffline: '未连接',
+      chatEmpty: '还没有消息，说点什么吧～',
+      chatPlaceholder: '输入消息…',
+      chatSend: '发送',
+      chatFail: '发送失败，检查一下网络',
+      chatFriendNotOnline: '她还没联网登录过游戏，让她先打开一次',
+      chatNoCloud: '云聊天未启用：填好 js/firebase-config.js 传到 GitHub 就能用',
+      giftInChat: '礼物',
+      giftClaim: '收下',
+      giftClaimed: '已收下',
+      giftCloudSent: '礼物已送到～',
+      giftTooBig: '礼物太大啦，少选几件'
     },
     it: {
       title: 'Cosa mi metto<br>oggi?',
@@ -174,7 +190,23 @@
       pieces: 'pz',
       giftHint: 'Invia il tuo codice a un\'amica: dopo avervi aggiunti potete scambiarvi regali.',
       del: 'Elimina',
-      langBtn: '中'
+      langBtn: '中',
+      photo: 'Foto',
+      photoSaved: 'Foto salvata!',
+      photoFail: 'Il browser blocca il salvataggio in locale: usa la versione online',
+      chatOnline: 'Connessa in tempo reale',
+      chatOffline: 'Non connessa',
+      chatEmpty: 'Nessun messaggio, scrivi qualcosa!',
+      chatPlaceholder: 'Scrivi un messaggio…',
+      chatSend: 'Invia',
+      chatFail: 'Invio non riuscito, controlla la connessione',
+      chatFriendNotOnline: 'Non si è ancora collegata: chiedile di aprire il gioco una volta',
+      chatNoCloud: 'Chat non attiva: inserisci js/firebase-config.js e carica su GitHub',
+      giftInChat: 'Regalo',
+      giftClaim: 'Ritira',
+      giftClaimed: 'Ritirato',
+      giftCloudSent: 'Regalo inviato!',
+      giftTooBig: 'Regalo troppo grande, scegli meno capi'
     }
   };
 

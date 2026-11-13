@@ -106,7 +106,14 @@
     // 房间按钮
     $('#btn-wardrobe').addEventListener('click', function () { Wardrobe.open(); });
     $('#btn-shop').addEventListener('click', function () { Shop.open(); });
-    $('#btn-goout').onclick = function(e) { e.stopPropagation(); goOut(); };
+      $('#btn-goout').onclick = function(e) { e.stopPropagation(); goOut(); };
+    const photoBtn = $('#btn-photo');
+    if (photoBtn) {
+      photoBtn.onclick = function (e) {
+        e.stopPropagation();
+        if (window.Photo) window.Photo.take();
+      };
+    }
     initCharSettings();
 
     // 身体面板（像衣柜一样竖排展示）
@@ -296,7 +303,7 @@
       $('#btn-wardrobe').style.display = 'none';
       $('#btn-shop').style.display = 'none';
       $('#btn-lang').style.display = 'none';
-      document.querySelector('.hud-coins').style.display = 'none';
+      // 金币和人物设置按钮在出门场景里继续保留
 
       let banner = $('#loc-banner');
       if (!banner) {
