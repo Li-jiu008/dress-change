@@ -107,7 +107,21 @@
       giftClaim: '收下',
       giftClaimed: '已收下',
       giftCloudSent: '礼物已送到～',
-      giftTooBig: '礼物太大啦，少选几件'
+      giftTooBig: '礼物太大啦，少选几件',
+      mail: '邮箱',
+      mailTitle: '礼物邮箱',
+      mailEmpty: '邮箱是空的，还没有人送礼给你',
+      mailFrom: '来自',
+      mailAccept: '收下',
+      mailDecline: '拒绝',
+      mailAccepted: '已收下',
+      mailDeclined: '已拒绝',
+      mailPending: '等你处理',
+      mailSentTitle: '我送出的',
+      mailGiftSent: '礼物已送进对方邮箱～',
+      mailFail: '发送失败，检查一下网络',
+      mailNoCloud: '云邮箱未启用，先用礼物码方式送',
+      friendAutoAdded: '有人加了你，已经自动进好友列表'
     },
     it: {
       title: 'Cosa mi metto<br>oggi?',
@@ -206,7 +220,21 @@
       giftClaim: 'Ritira',
       giftClaimed: 'Ritirato',
       giftCloudSent: 'Regalo inviato!',
-      giftTooBig: 'Regalo troppo grande, scegli meno capi'
+      giftTooBig: 'Regalo troppo grande, scegli meno capi',
+      mail: 'Posta',
+      mailTitle: 'Posta regali',
+      mailEmpty: 'La posta è vuota, nessun regalo per ora',
+      mailFrom: 'Da',
+      mailAccept: 'Accetta',
+      mailDecline: 'Rifiuta',
+      mailAccepted: 'Accettato',
+      mailDeclined: 'Rifiutato',
+      mailPending: 'Da gestire',
+      mailSentTitle: 'Inviati',
+      mailGiftSent: 'Regalo consegnato nella sua posta!',
+      mailFail: 'Invio non riuscito, controlla la connessione',
+      mailNoCloud: 'Posta non attiva, usa il codice regalo',
+      friendAutoAdded: 'Qualcuno ti ha aggiunta: è già nella lista amiche'
     }
   };
 

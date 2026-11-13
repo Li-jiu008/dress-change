@@ -250,10 +250,11 @@
         if (it) picked.push({ id: it.id, name: it.name, category: it.category, src: it.src });
       });
       mask.remove();
-      Cloud.sendChat(currentUid, { type: 'gift', items: picked }).then(function () {
-        toast('giftCloudSent');
+      // 礼物走邮箱：对方可以自己决定收下或拒绝
+      Cloud.sendGift(currentUid, picked).then(function () {
+        toast('mailGiftSent');
       }).catch(function (e) {
-        toast(e && e.message === 'too-big' ? 'giftTooBig' : 'chatFail');
+        toast(e && e.message === 'too-big' ? 'giftTooBig' : 'mailFail');
       });
     };
   }

@@ -143,6 +143,98 @@
     });
   }
 
+  // ---------- 好友关系（双向） ----------
+  // 文档 id 同样是两个 uid 排序拼接，members 里存双方
+  function linkRef(otherUid) {
+    return db.collection('links').doc(chatId(uid, otherUid));
+  }
+
+  // 我加了一个人：写一条关系，对方登录时会自动看到我
+  async function linkFriend(otherUid, otherCode, otherName) {
+    if (!db || !uid) return false;
+    if (!otherUid || otherUid === uid) return false;
+    const acc = window.Friends && window.Friends.account ? window.Friends.account() : { id: '', name: '' };
+    const mine = { uid: uid, code: acc.id || '', name: acc.name || '' };
+    const other = { uid: otherUid, code: otherCode || '', name: otherName || '' };
+    const a = uid < otherUid ? mine : other;
+    const b = uid < otherUid ? other : mine;
+    try {
+      await linkRef(otherUid).set({
+        members: [uid, otherUid],
+        a: a,
+        b: b,
+        updatedAt: Date.now()
+      }, { merge: true });
+      return true;
+    } catch (e) {
+      console.warn('[cloud] 建立好友关系失败：', e);
+      return false;
+    }
+  }
+
+  // 监听所有和我有关的好友关系；回调里给的是对方的信息
+  function listenLinks(onChange) {
+    if (!db || !uid) return function () {};
+    // 同样必须带 array-contains，规则才放行整批读
+    return db.collection('links').where('members', 'array-contains', uid).onSnapshot(function (snap) {
+      const list = [];
+      snap.forEach(function (d) {
+        const v = d.data() || {};
+        const other = (v.a && v.a.uid === uid) ? v.b : v.a;
+        if (other && other.uid) list.push(other);
+      });
+      onChange(list);
+    }, function (err) {
+      console.warn('[cloud] 好友关系监听失败：', err);
+      onChange([]);
+    });
+  }
+
+  // ---------- 礼物邮箱 ----------
+  async function sendGift(toUid, items) {
+    if (!db || !uid) throw new Error('not-ready');
+    if (!toUid) throw new Error('no-target');
+    if (toUid === uid) throw new Error('self');
+    if (!Array.isArray(items) || !items.length) throw new Error('empty');
+    const payload = { type: 'gift-mail', items: items };
+    if (JSON.stringify(payload).length > 700 * 1024) throw new Error('too-big');  // Firestore 单文档 1MB
+    const acc = window.Friends && window.Friends.account ? window.Friends.account() : { id: '', name: '' };
+    await db.collection('gifts').add({
+      members: [uid, toUid],
+      fromUid: uid,
+      toUid: toUid,
+      from: { code: acc.id || '', name: acc.name || '' },
+      items: items,
+      status: 'pending',
+      createdAt: Date.now()
+    });
+    return true;
+  }
+
+  function listenGifts(onChange) {
+    if (!db || !uid) return function () {};
+    return db.collection('gifts').where('members', 'array-contains', uid).onSnapshot(function (snap) {
+      const list = [];
+      snap.forEach(function (d) {
+        const v = d.data() || {};
+        v._id = d.id;
+        list.push(v);
+      });
+      list.sort(function (a, b) { return (b.createdAt || 0) - (a.createdAt || 0); });
+      onChange(list);
+    }, function (err) {
+      console.warn('[cloud] 邮箱监听失败：', err);
+      onChange([]);
+    });
+  }
+
+  // 收件人处理礼物：status = 'accepted' | 'declined'
+  async function respondGift(giftId, status) {
+    if (!db || !uid) throw new Error('not-ready');
+    await db.collection('gifts').doc(giftId).update({ status: status, actedAt: Date.now() });
+    return true;
+  }
+
   window.Cloud = {
     ready: ready,
     configured: configured,
@@ -151,6 +243,11 @@
     resolveCode: resolveCode,
     sendChat: sendChat,
     listenChat: listenChat,
-    chatId: chatId
+    chatId: chatId,
+    linkFriend: linkFriend,
+    listenLinks: listenLinks,
+    sendGift: sendGift,
+    listenGifts: listenGifts,
+    respondGift: respondGift
   };
 })();

@@ -94,6 +94,41 @@
 
   function saveFriends(list) { localStorage.setItem(FR_KEY, JSON.stringify(list)); }
 
+  // 把一个 {uid, code, name} 写进本地好友名字：已有就补 uid，没有就新增
+  // 返回 true 表示这次是新加进来的
+  function upsertFriend(other) {
+    if (!other || !other.uid) return false;
+    const code = String(other.code || '').toUpperCase();
+    const list = loadFriends();
+    const found = list.filter(function (f) { return f.uid === other.uid || (code && f.id === code); })[0];
+    if (found) {
+      found.uid = other.uid;
+      if (other.name && (!found.name || found.name === found.id)) found.name = other.name;
+      saveFriends(list);
+      return false;
+    }
+    if (!code) return false;
+    list.push({ id: code, name: other.name || code, uid: other.uid, addedAt: Date.now() });
+    saveFriends(list);
+    return true;
+  }
+
+  // 以后台方式监听云端好友关系：别人加了我，我这边自动出现
+  function watchLinks() {
+    if (!window.Cloud || !Cloud.configured()) return;
+    Cloud.ready().then(function (ok) {
+      if (!ok || !Cloud.listenLinks) return;
+      Cloud.listenLinks(function (others) {
+        let added = 0;
+        others.forEach(function (o) { if (upsertFriend(o)) added++; });
+        if (added > 0) {
+          toast(t('friendAutoAdded'));
+          if (panel && panel.classList.contains('open')) buildPanel();
+        }
+      });
+    });
+  }
+
   // 好友码允许两种写法：QS-XXXXXX  或  QS-XXXXXX|昵称
   function parseFriendCode(raw) {
     const text = String(raw || '').trim();
@@ -245,11 +280,27 @@
       if (!parsed) { toast(t('codeInvalid')); return; }
       const list = loadFriends();
       if (list.some(function (f) { return f.id === parsed.id; })) { toast(t('alreadyFriend')); return; }
-      list.push({ id: parsed.id, name: parsed.name || parsed.id, addedAt: Date.now() });
+      const rec = { id: parsed.id, name: parsed.name || parsed.id, addedAt: Date.now() };
+      list.push(rec);
       saveFriends(list);
       input.value = '';
       toast(t('friendAdded'));
       buildPanel();
+      // 云端登记双向关系：对方下次打开游戏就会自动有我这个好友
+      if (window.Cloud && Cloud.configured() && Cloud.linkFriend) {
+        Cloud.ready().then(function (ok) {
+          if (!ok) return;
+          return Cloud.resolveCode(rec.id).then(function (r) {
+            if (!r || !r.uid) { toast(t('chatFriendNotOnline')); return; }
+            rec.uid = r.uid;
+            rec.name = r.name || rec.name;
+            const l2 = loadFriends();
+            l2.forEach(function (f) { if (f.id === rec.id) { f.uid = rec.uid; f.name = rec.name; } });
+            saveFriends(l2);
+            return Cloud.linkFriend(r.uid, rec.id, rec.name);
+          });
+        }).catch(function () {});
+      }
     };
     panel.querySelectorAll('[data-del]').forEach(function (btn) {
       btn.onclick = function () {
@@ -345,8 +396,32 @@
         if (it) picked.push(it);
       });
       mask.remove();
-      showGiftResult(friend, packGift(friend, picked));
+      sendToFriend(friend, picked);
     };
+  }
+
+  // 优先走云端邮箱（对方打开游戏就能在邮箱里收到，可接受/拒绝）
+  // 云端不可用时退回原来的礼物码方式
+  function sendToFriend(friend, picked) {
+    const fallback = function () { showGiftResult(friend, packGift(friend, picked)); };
+    if (!window.Cloud || !Cloud.configured() || !Cloud.sendGift) { fallback(); return; }
+    Cloud.ready().then(function (ok) {
+      if (!ok) { fallback(); return; }
+      const step = friend.uid ? Promise.resolve({ uid: friend.uid }) : Cloud.resolveCode(friend.id);
+      return step.then(function (r) {
+        if (!r || !r.uid) { toast(t('chatFriendNotOnline')); fallback(); return; }
+        const list = loadFriends();
+        list.forEach(function (f) { if (f.id === friend.id) f.uid = r.uid; });
+        saveFriends(list);
+        return Cloud.sendGift(r.uid, picked.map(function (it) {
+          return { id: it.id, name: it.name, category: it.category, src: it.src };
+        })).then(function () {
+          toast(t('mailGiftSent'));
+        });
+      });
+    }).catch(function (e) {
+      toast(e && e.message === 'too-big' ? t('giftTooBig') : t('mailFail'));
+    });
   }
 
   function showGiftResult(friend, payload) {
@@ -432,6 +507,7 @@
       if (panel && panel.classList.contains('open')) close();
       else open();
     });
+    watchLinks();
   }
 
   document.addEventListener('DOMContentLoaded', init);
