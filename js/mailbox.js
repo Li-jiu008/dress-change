@@ -106,9 +106,14 @@
         ? ''
         : '<span style="color:#b08a9b;">' + t('mailFrom') + ' </span>';
 
+      // 送礼人的名字：优先用我自己起的备注名
+      const fromName = (window.Friends && Friends.nameForGift)
+        ? Friends.nameForGift(g.from)
+        : ((g.from && (g.from.name || g.from.code)) || '?');
+
       return '<div style="border:1.5px solid #f0d5e0;border-radius:12px;padding:10px 12px;margin-bottom:10px;background:#fff;">' +
         '<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px;">' +
-          '<div style="font-size:12px;color:#8a3b55;font-weight:600;">' + who + escapeHtml((g.from && (g.from.name || g.from.code)) || '?') + '</div>' +
+          '<div style="font-size:12px;color:#8a3b55;font-weight:600;">' + who + escapeHtml(fromName || '?') + '</div>' +
           '<div style="font-size:10px;color:#c6a8b6;">' + fmtTime(g.createdAt) + '</div>' +
         '</div>' +
         items + actions +

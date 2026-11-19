@@ -61,11 +61,25 @@
     } catch (e) { return null; }
   }
 
+  // 鼠标拖动产生的额外位移（百分比），单独存，和「调整」面板的 x/y 叠加
+  function getDragOffset(itemId) {
+    if (!itemId) return null;
+    try {
+      const d = JSON.parse(localStorage.getItem('dressup_layer_drag') || '{}');
+      return d[itemId] || null;
+    } catch (e) { return null; }
+  }
+
+  // 可以被鼠标拖动的图层类别（身体/眼睛/嘴不参与）
+  const DRAGGABLE = ['hair', 'top', 'bottom', 'dress', 'outer', 'socks', 'shoes', 'neckAcc', 'headAcc', 'handAcc'];
+
   function makeLayerImg(zIndex, file, fallbackKey, alt, onRealLoad, category, itemId) {
     const img = document.createElement('img');
     img.className = 'char-layer';
     img.style.zIndex = zIndex;
     if (alt) img.alt = alt;
+
+    let base = '';
     const transform = getTransform(itemId);
     if (transform) {
       const sx = transform.scaleX || 1;
@@ -73,12 +87,24 @@
       const rot = transform.rotate || 0;
       const tx = transform.x || 0;
       const ty = transform.y || 0;
-      img.style.transform = 'translate(' + tx + '%,' + ty + '%) scale(' + sx + ',' + sy + ') rotate(' + rot + 'deg)';
+      base = 'translate(' + tx + '%,' + ty + '%) scale(' + sx + ',' + sy + ') rotate(' + rot + 'deg)';
       img.style.transformOrigin = 'center center';
     } else if (category && LAYER_TRANSFORM[category]) {
-      img.style.transform = LAYER_TRANSFORM[category];
+      base = LAYER_TRANSFORM[category];
       img.style.transformOrigin = 'center center';
     }
+
+    // 拖动偏移放在最外层，保证不会改变衣服原有大小
+    const orig = base;
+    const offset = getDragOffset(itemId);
+    if (offset) base = 'translate(' + (offset.x || 0) + '%,' + (offset.y || 0) + '%) ' + base;
+
+    if (base) img.style.transform = base;
+    img.dataset.itemId = itemId || '';
+    img.dataset.category = category || '';
+    img.dataset.baseTransform = orig;
+    if (category && DRAGGABLE.indexOf(category) >= 0 && itemId) img.dataset.draggable = '1';
+
     img.src = file;
     img.onerror = function () {
       this.onerror = null;

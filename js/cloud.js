@@ -235,6 +235,188 @@
     return true;
   }
 
+  // ---------- 社区：公开穿搭帖 ----------
+  // posts/{pid}: { uid, author, name, caption, img, thumb, scene, likedBy:[uid], createdAt }
+  function author() {
+    const acc = window.Friends && window.Friends.account ? window.Friends.account() : { id: '', name: '' };
+    return { id: acc.id || '', name: acc.name || '' };
+  }
+
+  async function createPost(look, caption, shopItems) {
+    if (!db || !uid) throw new Error('not-ready');
+    if (!look || !look.img) throw new Error('empty');
+    const payload = {
+      uid: uid,
+      author: author(),
+      name: String(look.name || '').slice(0, 40),
+      caption: String(caption || '').slice(0, 120),
+      img: look.img,
+      thumb: look.thumb || look.img,
+      scene: String(look.scene || '').slice(0, 40),
+      shopItems: (shopItems || []).map(function (s) {
+        return { id: s.id, docId: s.docId, name: s.name, category: s.category, min: s.min, max: s.max };
+      }),
+      likedBy: [],
+      createdAt: Date.now()
+    };
+    if (JSON.stringify(payload).length > 700 * 1024) throw new Error('too-big');
+    const ref = await db.collection('posts').add(payload);
+    return ref.id;
+  }
+
+  function listenPosts(onChange) {
+    if (!db || !uid) return function () {};
+    return db.collection('posts').onSnapshot(function (snap) {
+      const list = [];
+      snap.forEach(function (d) {
+        const v = d.data() || {};
+        v._id = d.id;
+        if (!Array.isArray(v.likedBy)) v.likedBy = [];
+        list.push(v);
+      });
+      list.sort(function (a, b) { return (b.createdAt || 0) - (a.createdAt || 0); });
+      onChange(list);
+    }, function (err) {
+      console.warn('[cloud] 社区监听失败：', err);
+      onChange([]);
+    });
+  }
+
+  async function toggleLike(postId, like) {
+    if (!db || !uid) throw new Error('not-ready');
+    const ref = db.collection('posts').doc(postId);
+    const FV = firebase.firestore.FieldValue;
+    await ref.update({ likedBy: like ? FV.arrayUnion(uid) : FV.arrayRemove(uid) });
+    return true;
+  }
+
+  async function deletePost(postId) {
+    if (!db || !uid) throw new Error('not-ready');
+    await db.collection('posts').doc(postId).delete();
+    return true;
+  }
+
+  async function addComment(postId, text) {
+    if (!db || !uid) throw new Error('not-ready');
+    const body = String(text || '').trim().slice(0, 80);
+    if (!body) throw new Error('empty');
+    await db.collection('posts').doc(postId).collection('comments').add({
+      uid: uid,
+      author: author(),
+      text: body,
+      createdAt: Date.now()
+    });
+    return true;
+  }
+
+  async function getComments(postId) {
+    if (!db || !uid) return [];
+    try {
+      const snap = await db.collection('posts').doc(postId).collection('comments').orderBy('createdAt', 'asc').get();
+      const list = [];
+      snap.forEach(function (d) {
+        const v = d.data() || {};
+        v._id = d.id;
+        list.push(v);
+      });
+      return list;
+    } catch (e) {
+      console.warn('[cloud] 读取评论失败：', e);
+      return [];
+    }
+  }
+
+  // ---------- 玩家自制衣服：上架 / 读取 ----------
+  // items/{docId}: { ownerUid, owner, itemId, name, category, src, createdAt }
+  // 帖子只存 id 和名字，原图放这里，避免帖子文档过大
+  function itemDocId(itemId) {
+    return uid + '__' + String(itemId).replace(/\//g, '_');
+  }
+
+  async function publishItem(item) {
+    if (!db || !uid) throw new Error('not-ready');
+    if (!item || !item.id || !item.src) throw new Error('empty');
+    if (!/^assets\//.test(item.src) && !/^data:image\//.test(item.src)) throw new Error('bad-src');
+    const docId = itemDocId(item.id);
+    const payload = {
+      ownerUid: uid,
+      owner: author(),
+      itemId: item.id,
+      name: String(item.name || '').slice(0, 30),
+      category: item.category || 'top',
+      src: item.src,
+      createdAt: Date.now()
+    };
+    if (JSON.stringify(payload).length > 700 * 1024) throw new Error('too-big');
+    await db.collection('items').doc(docId).set(payload, { merge: true });
+    return docId;
+  }
+
+  async function getItem(docId) {
+    if (!db) return null;
+    try {
+      const snap = await db.collection('items').doc(docId).get();
+      if (!snap.exists) return null;
+      const v = snap.data() || {};
+      v.docId = docId;
+      return v;
+    } catch (e) {
+      console.warn('[cloud] 读取衣服失败：', e);
+      return null;
+    }
+  }
+
+  // ---------- 交易 ----------
+  async function createTrade(post, shopItem) {
+    if (!db || !uid) throw new Error('not-ready');
+    if (!post || !post.uid) throw new Error('no-target');
+    if (post.uid === uid) throw new Error('self');
+    const payload = {
+      members: [uid, post.uid],
+      postId: post._id,
+      itemDocId: shopItem.docId,
+      itemId: shopItem.id,
+      itemName: shopItem.name || '',
+      category: shopItem.category || 'top',
+      sellerUid: post.uid,
+      buyerUid: uid,
+      seller: post.author || { id: '', name: '' },
+      buyer: author(),
+      minPrice: shopItem.min,
+      maxPrice: shopItem.max,
+      price: 0,
+      status: 'requested',
+      createdAt: Date.now(),
+      updatedAt: Date.now()
+    };
+    if (JSON.stringify(payload).length > 700 * 1024) throw new Error('too-big');
+    const ref = await db.collection('trades').add(payload);
+    return ref.id;
+  }
+
+  function listenTrades(onChange) {
+    if (!db || !uid) return function () {};
+    return db.collection('trades').where('members', 'array-contains', uid).onSnapshot(function (snap) {
+      const list = [];
+      snap.forEach(function (d) {
+        const v = d.data() || {};
+        v._id = d.id;
+        list.push(v);
+      });
+      list.sort(function (a, b) { return (b.createdAt || 0) - (a.createdAt || 0); });
+      onChange(list);
+    }, function (err) {
+      console.warn('[cloud] 交易监听失败：', err);
+      onChange([]);
+    });
+  }
+
+  async function updateTrade(tradeId, patch) {
+    if (!db || !uid) throw new Error('not-ready');
+    await db.collection('trades').doc(tradeId).update(Object.assign({ updatedAt: Date.now() }, patch));
+    return true;
+  }
+
   window.Cloud = {
     ready: ready,
     configured: configured,
@@ -248,6 +430,17 @@
     listenLinks: listenLinks,
     sendGift: sendGift,
     listenGifts: listenGifts,
-    respondGift: respondGift
+    respondGift: respondGift,
+    createPost: createPost,
+    listenPosts: listenPosts,
+    toggleLike: toggleLike,
+    deletePost: deletePost,
+    addComment: addComment,
+    getComments: getComments,
+    publishItem: publishItem,
+    getItem: getItem,
+    createTrade: createTrade,
+    listenTrades: listenTrades,
+    updateTrade: updateTrade
   };
 })();

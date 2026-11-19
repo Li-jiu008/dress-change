@@ -22,6 +22,17 @@
   function t(k) { return window.I18N ? I18N.t(k) : k; }
   function toast(k) { if (window.App && App.toast) App.toast(k); }
 
+  // 把数据层的错误翻成人话：别一律显示「发送失败」
+  function errKey(e) {
+    const m = (e && e.message) || '';
+    if (m === 'self') return 'chatSelf';
+    if (m === 'no-target') return 'chatFriendNotOnline';
+    if (m === 'not-ready') return 'chatNoCloud';
+    if (m === 'too-big') return 'giftTooBig';
+    if (/permission|insufficient/i.test(m)) return 'chatDenied';
+    return 'chatFail';
+  }
+
   function loadJSON(key, def) {
     try { return JSON.parse(localStorage.getItem(key) || 'null') || def; } catch (e) { return def; }
   }
@@ -31,6 +42,12 @@
     return String(s == null ? '' : s)
       .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
       .replace(/"/g, '&quot;').replace(/'/g, '&#39;');
+  }
+
+  // 优先显示自己给好友起的备注名
+  function friendLabel(f) {
+    if (window.Friends && Friends.displayName) return Friends.displayName(f);
+    return (f && (f.name || f.id)) || '';
   }
 
   function fmtTime(ts) {
@@ -124,8 +141,17 @@
     const friend = currentFriend;
     if (!friend || !panel) return;
 
-    const items = msgList.map(function (m) {
+    const items = msgList.map(function (m, mi) {
       const mine = m.fromUid === Cloud.uid();
+      if (m.type === 'photo') {
+        return '<div style="align-self:' + (mine ? 'flex-end' : 'flex-start') + ';max-width:76%;margin:6px 0;">' +
+          '<div style="background:' + (mine ? '#fbe7ef' : '#fdf6f9') + ';border:1px solid #f0d5e0;border-radius:12px;padding:5px;">' +
+            '<img data-photo="' + mi + '" src="' + escapeAttr(m.thumb || m.img) + '" style="width:100%;max-width:220px;border-radius:8px;display:block;cursor:zoom-in;background:#fdf6f9;">' +
+            ((m.name) ? '<div style="font-size:11px;color:#8a3b55;padding:5px 3px 2px;">' + escapeHtml(m.name) + '</div>' : '') +
+          '</div>' +
+          '<div style="font-size:10px;color:#c6a8b6;margin-top:2px;text-align:' + (mine ? 'right' : 'left') + ';">' + fmtTime(m.createdAt) + '</div>' +
+        '</div>';
+      }
       if (m.type === 'gift') {
         const claimed = loadJSON(CLAIM_KEY, []).indexOf(m._id) >= 0;
         const rows = (m.items || []).map(function (it) {
@@ -152,9 +178,11 @@
     panel.innerHTML =
       '<div style="padding:12px 14px;border-bottom:1px solid #f0e6ec;display:flex;align-items:center;gap:8px;background:#fdf6f9;">' +
         '<div style="flex:1;min-width:0;">' +
-          '<div style="font-size:15px;font-weight:600;color:#8a3b55;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">' + escapeHtml(friend.name || friend.id) + '</div>' +
+          '<div style="font-size:15px;font-weight:600;color:#8a3b55;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">' + escapeHtml(friendLabel(friend)) + '</div>' +
           '<div style="font-size:10px;color:#b08a9b;">' + (cloudOk ? t('chatOnline') : t('chatOffline')) + '</div>' +
         '</div>' +
+        '<button id="chat-rename" title="' + escapeHtml(t('rename')) + '" style="border:1px solid #f0d5e0;background:#fff;color:#8a3b55;border-radius:8px;padding:6px 8px;cursor:pointer;font-size:12px;">✏️</button>' +
+        '<button id="chat-photo" title="' + escapeHtml(t('chatPickPhoto')) + '" style="border:1px solid #f0d5e0;background:#fff;color:#8a3b55;border-radius:8px;padding:6px 8px;cursor:pointer;font-size:12px;">📷</button>' +
         '<button id="chat-gift" style="border:1px solid #f0d5e0;background:#fff;color:#8a3b55;border-radius:8px;padding:6px 10px;cursor:pointer;font-size:12px;">🎁</button>' +
         '<button id="chat-close" style="border:none;background:none;font-size:18px;color:#a06b82;cursor:pointer;">✕</button>' +
       '</div>' +
@@ -168,6 +196,23 @@
 
     panel.querySelector('#chat-close').onclick = close;
     panel.querySelector('#chat-gift').onclick = function () { pickGift(); };
+    panel.querySelector('#chat-rename').onclick = function () {
+      if (window.Friends && Friends.rename) Friends.rename(currentFriend);
+    };
+    panel.querySelector('#chat-photo').onclick = function () {
+      if (!currentFriend) return;
+      if (!window.Gallery) { toast('chatNoCloud'); return; }
+      Gallery.pick({ mode: 'chat' }, function (look) { sendPhoto(currentFriend, look); });
+    };
+
+    panel.querySelectorAll('[data-photo]').forEach(function (img) {
+      img.onclick = function () {
+        const m = msgList[Number(this.getAttribute('data-photo'))];
+        if (!m) return;
+        if (window.Gallery) Gallery.preview(m.img || m.thumb);
+        else window.open(m.img || m.thumb, '_blank');
+      };
+    });
 
     panel.querySelector('#chat-send').onclick = sendText;
     panel.querySelector('#chat-input').onkeydown = function (e) {
@@ -198,15 +243,47 @@
 
   async function sendText() {
     const input = panel.querySelector('#chat-input');
-    if (!input || !currentUid) return;
+    if (!input) return;
     const text = input.value.trim();
     if (!text) return;
+    if (!currentUid) { toast('chatFriendNotOnline'); return; }
     input.value = '';
     try {
       await Cloud.sendChat(currentUid, { type: 'text', text: text });
     } catch (e) {
-      toast('chatFail');
+      console.warn('[chat] 发送失败：', e);
+      toast(errKey(e));
       input.value = text;
+    }
+  }
+
+  /* ---------- 发照片 ---------- */
+  async function sendPhoto(friend, look) {
+    if (!friend || !look) return false;
+    if (!Cloud.configured() || location.protocol === 'file:') { toast('chatNoCloud'); return false; }
+    // 从相册直接发给某位好友时，当前聊天窗口可能不是她：单独解析 uid，不改动当前会话
+    let targetUid = (currentFriend && friend.id === currentFriend.id) ? currentUid : null;
+    if (!targetUid) targetUid = await uidOf(friend);
+    if (!targetUid) { toast('chatFriendNotOnline'); return false; }
+    if (targetUid === Cloud.uid()) { toast('chatSelf'); return false; }
+
+    // Firestore 单条消息 700KB 上限，太大的图降级用缩略图
+    const img = (look.img && look.img.length < 620000) ? look.img : look.thumb;
+    const payload = {
+      type: 'photo',
+      img: img,
+      thumb: look.thumb || img,
+      name: String(look.name || '').slice(0, 40),
+      lookId: look.id || ''
+    };
+    try {
+      await Cloud.sendChat(targetUid, payload);
+      toast('chatPhotoSent');
+      return true;
+    } catch (e) {
+      console.warn('[chat] 发照片失败：', e);
+      toast(errKey(e));
+      return false;
     }
   }
 
@@ -254,7 +331,8 @@
       Cloud.sendGift(currentUid, picked).then(function () {
         toast('mailGiftSent');
       }).catch(function (e) {
-        toast(e && e.message === 'too-big' ? 'giftTooBig' : 'mailFail');
+        console.warn('[chat] 送礼失败：', e);
+        toast(errKey(e));
       });
     };
   }
@@ -311,9 +389,20 @@
   if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', init);
   else setTimeout(init, 0);
 
+  // 在好友面板里改完备注名，聊天窗口标题要跟着变
+  window.addEventListener('dressup-friend-renamed', function (e) {
+    if (!panel || panel.style.display === 'none' || !currentFriend) return;
+    if (!e.detail || e.detail.id !== currentFriend.id) return;
+    const list = (window.Friends && Friends.list) ? Friends.list() : [];
+    const f = list.filter(function (x) { return x.id === currentFriend.id; })[0];
+    if (f) currentFriend = f;
+    render();
+  });
+
   window.Chat = {
     open: open,
     close: close,
+    sendPhoto: sendPhoto,
     isCloud: function () { return cloudOk; }
   };
 })();

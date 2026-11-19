@@ -94,6 +94,47 @@
 
   function saveFriends(list) { localStorage.setItem(FR_KEY, JSON.stringify(list)); }
 
+  // 备注名：只存在自己这台设备的 localStorage 里，
+  // 不会改到对方本人设置的昵称，也不会发给云端。
+  // 显示优先级：备注名 > 对方昵称 > 好友码
+  function nameOf(f) {
+    if (!f) return '';
+    return f.alias || f.name || f.id || '';
+  }
+
+  function findFriend(key) {
+    if (!key) return null;
+    const list = loadFriends();
+    return list.filter(function (f) { return f.id === key || f.uid === key; })[0] || null;
+  }
+
+  // 礼物/邮件里只有 {code, name}，这里用备注名替换显示
+  function nameForGift(from) {
+    if (!from) return '';
+    const f = findFriend(from.code) || findFriend(from.uid);
+    if (f) return nameOf(f);
+    return from.name || from.code || '';
+  }
+
+  function setAlias(friendId, alias) {
+    const list = loadFriends();
+    const f = list.filter(function (x) { return x.id === friendId; })[0];
+    if (!f) return false;
+    const v = String(alias == null ? '' : alias).trim();
+    if (v) f.alias = v;
+    else delete f.alias;
+    saveFriends(list);
+    try {
+      window.dispatchEvent(new CustomEvent('dressup-friend-renamed', { detail: { id: friendId, alias: v } }));
+    } catch (e) {}
+    return true;
+  }
+
+  function currentAlias(friendId) {
+    const f = findFriend(friendId);
+    return (f && f.alias) || '';
+  }
+
   // 把一个 {uid, code, name} 写进本地好友名字：已有就补 uid，没有就新增
   // 返回 true 表示这次是新加进来的
   function upsertFriend(other) {
@@ -194,6 +235,7 @@
     input: 'width:100%;padding:8px 10px;border:1px solid #e5d3da;border-radius:8px;box-sizing:border-box;font-size:14px;font-family:inherit;',
     btnPrimary: 'padding:8px 14px;border:none;background:#d4719a;color:#fff;border-radius:8px;cursor:pointer;font-size:13px;font-family:inherit;',
     btnGhost: 'padding:8px 14px;border:1px solid #e0c9d3;background:#fff;color:#8a3b55;border-radius:8px;cursor:pointer;font-size:13px;font-family:inherit;',
+    btnIcon: 'width:32px;height:32px;padding:0;border:1px solid #e0c9d3;background:#fff;color:#8a3b55;border-radius:8px;cursor:pointer;font-size:14px;line-height:1;font-family:inherit;',
     btnDanger: 'padding:6px 10px;border:1px solid #e8c8d3;background:#fff;color:#b8637f;border-radius:8px;cursor:pointer;font-size:12px;font-family:inherit;'
   };
 
@@ -206,14 +248,23 @@
       friendRows = '<div style="font-size:13px;color:#b08a9b;line-height:1.6;padding:8px 0;">' + t('friendsEmpty') + '</div>';
     } else {
       friendRows = friends.map(function (f, i) {
-        return '<div style="display:flex;align-items:center;gap:10px;padding:10px 0;border-bottom:1px solid #f6e8ee;">' +
-          '<div style="flex:1;min-width:0;">' +
-            '<div style="font-size:14px;font-weight:600;color:#4a2b38;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">' + escapeHtml(f.name || f.id) + '</div>' +
-            '<div style="font-size:11px;color:#b08a9b;letter-spacing:.5px;">' + escapeHtml(f.id) + '</div>' +
+        const shown = nameOf(f);
+        const subLine = (f.alias
+          ? t('originalName') + ' ' + (f.name || f.id) + ' · '
+          : '') + f.id;
+        return '<div style="padding:10px 0;border-bottom:1px solid #f6e8ee;">' +
+          '<div style="display:flex;align-items:center;gap:8px;">' +
+            '<div style="flex:1;min-width:0;">' +
+              '<div style="font-size:14px;font-weight:600;color:#4a2b38;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">' + escapeHtml(shown) + '</div>' +
+              '<div style="font-size:11px;color:#b08a9b;letter-spacing:.5px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">' + escapeHtml(subLine) + '</div>' +
+            '</div>' +
+            '<button data-rename="' + i + '" title="' + escapeAttr(t('rename')) + '" style="' + S.btnIcon + '">✏️</button>' +
           '</div>' +
-          '<button data-chat="' + i + '" style="' + S.btnPrimary + '">💬</button>' +
-          '<button data-gift="' + i + '" style="' + S.btnGhost + '">' + t('sendGift') + '</button>' +
-          '<button data-del="' + i + '" style="' + S.btnDanger + '">' + t('del') + '</button>' +
+          '<div style="display:flex;gap:8px;margin-top:8px;">' +
+            '<button data-chat="' + i + '" style="' + S.btnPrimary + 'flex:1;">' + t('chat') + '</button>' +
+            '<button data-gift="' + i + '" style="' + S.btnGhost + 'flex:1;">' + t('sendGift') + '</button>' +
+            '<button data-del="' + i + '" style="' + S.btnDanger + '">' + t('del') + '</button>' +
+          '</div>' +
         '</div>';
       }).join('');
     }
@@ -311,6 +362,12 @@
         buildPanel();
       };
     });
+    panel.querySelectorAll('[data-rename]').forEach(function (btn) {
+      btn.onclick = function () {
+        const i = Number(this.getAttribute('data-rename'));
+        openRename(loadFriends()[i]);
+      };
+    });
     panel.querySelectorAll('[data-chat]').forEach(function (btn) {
       btn.onclick = function () {
         const i = Number(this.getAttribute('data-chat'));
@@ -333,6 +390,45 @@
       .replace(/"/g, '&quot;').replace(/'/g, '&#39;');
   }
   function escapeAttr(s) { return escapeHtml(s); }
+
+  // ---------- 给好友改备注名 ----------
+  function openRename(friend) {
+    if (!friend) return;
+    const oldAlias = friend.alias || '';
+
+    const mask = document.createElement('div');
+    mask.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,.4);z-index:140;display:flex;align-items:center;justify-content:center;';
+    mask.innerHTML = '<div style="background:#fff;border-radius:14px;padding:18px;width:340px;max-width:90vw;box-shadow:0 8px 30px rgba(0,0,0,.2);">' +
+      '<div style="font-weight:600;color:#8a3b55;margin-bottom:6px;">' + t('renameTitle') + '</div>' +
+      '<div style="font-size:12px;color:#b08a9b;margin-bottom:10px;">' + t('originalName') + ' ' + escapeHtml(friend.name || friend.id) + '</div>' +
+      '<input id="rn-input" maxlength="20" value="' + escapeAttr(oldAlias) + '" placeholder="' + escapeAttr(t('renamePlaceholder')) + '" style="' + S.input + '">' +
+      '<div style="font-size:11px;color:#b08a9b;line-height:1.6;margin:8px 0 14px;">' + t('renameHint') + '</div>' +
+      '<div style="display:flex;gap:8px;">' +
+        (oldAlias ? '<button id="rn-reset" style="' + S.btnGhost + 'flex:1;font-size:12px;">' + t('renameReset') + '</button>' : '') +
+        '<button id="rn-cancel" style="' + S.btnGhost + 'flex:1;">' + t('cancel') + '</button>' +
+        '<button id="rn-ok" style="' + S.btnPrimary + 'flex:1;">' + t('save') + '</button>' +
+      '</div></div>';
+
+    document.body.appendChild(mask);
+
+    const input = mask.querySelector('#rn-input');
+    function commit(val) {
+      setAlias(friend.id, val);
+      toast(t('renameSaved'));
+      mask.remove();
+      if (panel && panel.classList.contains('open')) buildPanel();
+    }
+
+    mask.querySelector('#rn-ok').onclick = function () { commit(input.value); };
+    mask.querySelector('#rn-cancel').onclick = function () { mask.remove(); };
+    const resetBtn = mask.querySelector('#rn-reset');
+    if (resetBtn) resetBtn.onclick = function () { commit(''); };
+    input.onkeydown = function (e) {
+      if (e.key === 'Enter') { e.preventDefault(); commit(input.value); }
+      else if (e.key === 'Escape') { mask.remove(); }
+    };
+    setTimeout(function () { try { input.focus(); input.select(); } catch (e) {} }, 50);
+  }
 
   function open() {
     ensureAccount();
@@ -378,7 +474,7 @@
 
     mask.innerHTML = '<div style="background:#fff;border-radius:14px;padding:18px;width:340px;max-width:90vw;max-height:80vh;display:flex;flex-direction:column;box-shadow:0 8px 30px rgba(0,0,0,.2);">' +
       '<div style="font-weight:600;color:#8a3b55;margin-bottom:4px;">' + t('pickClothes') + '</div>' +
-      '<div style="font-size:12px;color:#b08a9b;margin-bottom:10px;">' + t('sendGift') + ' → ' + escapeHtml(friend.name || friend.id) + '</div>' +
+      '<div style="font-size:12px;color:#b08a9b;margin-bottom:10px;">' + t('sendGift') + ' → ' + escapeHtml(nameOf(friend)) + '</div>' +
       '<div style="flex:1;overflow-y:auto;margin-bottom:14px;">' + rows + '</div>' +
       '<div style="display:flex;gap:8px;">' +
         '<button id="gf-cancel" style="' + S.btnGhost + 'flex:1;">' + t('cancel') + '</button>' +
@@ -407,13 +503,14 @@
     if (!window.Cloud || !Cloud.configured() || !Cloud.sendGift) { fallback(); return; }
     Cloud.ready().then(function (ok) {
       if (!ok) { fallback(); return; }
-      const step = friend.uid ? Promise.resolve({ uid: friend.uid }) : Cloud.resolveCode(friend.id);
-      return step.then(function (r) {
-        if (!r || !r.uid) { toast(t('chatFriendNotOnline')); fallback(); return; }
+      // 每次都重新查一次好友码：对方可能换过浏览器/清了缓存，uid 会变
+      return Cloud.resolveCode(friend.id).then(function (r) {
+        const target = (r && r.uid) || friend.uid;
+        if (!target) { toast(t('chatFriendNotOnline')); fallback(); return; }
         const list = loadFriends();
-        list.forEach(function (f) { if (f.id === friend.id) f.uid = r.uid; });
+        list.forEach(function (f) { if (f.id === friend.id) f.uid = target; });
         saveFriends(list);
-        return Cloud.sendGift(r.uid, picked.map(function (it) {
+        return Cloud.sendGift(target, picked.map(function (it) {
           return { id: it.id, name: it.name, category: it.category, src: it.src };
         })).then(function () {
           toast(t('mailGiftSent'));
@@ -433,7 +530,7 @@
 
     mask.innerHTML = '<div style="background:#fff;border-radius:14px;padding:18px;width:360px;max-width:92vw;box-shadow:0 8px 30px rgba(0,0,0,.2);">' +
       '<div style="font-weight:600;color:#8a3b55;margin-bottom:6px;">' + t('giftCode') + '</div>' +
-      '<div style="font-size:12px;color:#b08a9b;margin-bottom:10px;">' + t('sendGift') + ' → ' + escapeHtml(friend.name || friend.id) + '  ·  ' + payload.items.length + ' ' + t('pieces') + '</div>' +
+      '<div style="font-size:12px;color:#b08a9b;margin-bottom:10px;">' + t('sendGift') + ' → ' + escapeHtml(nameOf(friend)) + '  ·  ' + payload.items.length + ' ' + t('pieces') + '</div>' +
       (tooBig
         ? '<div style="font-size:13px;color:#8a3b55;line-height:1.6;margin-bottom:12px;">' + t('giftFile') + '</div>'
         : '<textarea readonly id="gf-code" style="width:100%;height:120px;padding:8px;border:1px solid #e5d3da;border-radius:8px;font-family:ui-monospace,Consolas,monospace;font-size:11px;word-break:break-all;box-sizing:border-box;margin-bottom:12px;">' + escapeHtml(code) + '</textarea>') +
@@ -517,6 +614,14 @@
     close: close,
     account: ensureAccount,
     list: loadFriends,
+    displayName: nameOf,
+    nameForGift: nameForGift,
+    rename: openRename,
+    setAlias: setAlias,
+    alias: currentAlias,
+    refresh: function () {
+      if (panel && panel.classList.contains('open')) buildPanel();
+    },
     _debug: { parseFriendCode: parseFriendCode, packGift: packGift, giftToCode: giftToCode, parseGift: parseGift }
   };
 })();

@@ -301,6 +301,10 @@
       const transforms = JSON.parse(localStorage.getItem('dressup_transforms') || '{}');
       delete transforms[item.id];
       localStorage.setItem('dressup_transforms', JSON.stringify(transforms));
+      // 鼠标拖动留下的偏移也一起清掉
+      const dragMap = JSON.parse(localStorage.getItem('dressup_layer_drag') || '{}');
+      delete dragMap[item.id];
+      localStorage.setItem('dressup_layer_drag', JSON.stringify(dragMap));
       Renderer.renderCharacter($('#character-container'), save);
     };
     adj.querySelector('#adj-done').onclick = function () { adj.remove(); };

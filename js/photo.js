@@ -254,6 +254,63 @@
     if (window.App && App.toast) App.toast('photoFail');
   }
 
+  function t(k) { return window.I18N ? I18N.t(k) : k; }
+
+  function escapeHtml(s) {
+    return String(s == null ? '' : s)
+      .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+      .replace(/"/g, '&quot;').replace(/'/g, '&#39;');
+  }
+
+  // 拍完的结果窗：照片已经进相册，这里可以改名 / 下载 / 去相册
+  function showResult(rec) {
+    const mask = document.createElement('div');
+    mask.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,.45);z-index:170;display:flex;align-items:center;justify-content:center;';
+    mask.innerHTML = '<div style="background:#fff;border-radius:16px;width:340px;max-width:92vw;max-height:92vh;display:flex;flex-direction:column;overflow:hidden;box-shadow:0 10px 40px rgba(0,0,0,.28);">' +
+      '<div style="padding:13px 16px;border-bottom:1px solid #f0e6ec;display:flex;justify-content:space-between;align-items:center;">' +
+        '<div style="font-size:15px;font-weight:600;color:#8a3b55;">📷 ' + escapeHtml(t('photoResultTitle')) + '</div>' +
+        '<button id="pr-close" style="border:none;background:none;font-size:18px;color:#a06b82;cursor:pointer;">✕</button>' +
+      '</div>' +
+      '<div style="padding:12px 14px;overflow-y:auto;">' +
+        '<img src="' + escapeHtml(rec.thumb || rec.img) + '" style="width:100%;border-radius:10px;display:block;background:#fdf6f9;cursor:zoom-in;">' +
+        '<input id="pr-name" maxlength="24" value="' + escapeHtml(rec.name) + '" placeholder="' + escapeHtml(t('photoNamePlaceholder')) + '" style="width:100%;margin-top:10px;padding:8px 10px;border:1px solid #e5d3da;border-radius:8px;font-size:13px;font-family:inherit;box-sizing:border-box;outline:none;">' +
+        '<div style="font-size:11px;color:#b08a9b;line-height:1.7;margin-top:6px;">' + escapeHtml(t('photoGalleryHint')) + '</div>' +
+      '</div>' +
+      '<div style="padding:11px 14px;border-top:1px solid #f0e6ec;display:flex;gap:8px;">' +
+        '<button id="pr-download" style="flex:1;padding:8px;border:1px solid #e0c9d3;background:#fff;color:#8a3b55;border-radius:8px;cursor:pointer;font-size:12px;font-family:inherit;">' + escapeHtml(t('downloadImage')) + '</button>' +
+        '<button id="pr-gallery" style="flex:1;padding:8px;border:1px solid #e0c9d3;background:#fff;color:#8a3b55;border-radius:8px;cursor:pointer;font-size:12px;font-family:inherit;">' + escapeHtml(t('openGallery')) + '</button>' +
+        '<button id="pr-done" style="flex:1;padding:8px;border:none;background:#d4719a;color:#fff;border-radius:8px;cursor:pointer;font-size:12px;font-family:inherit;">' + escapeHtml(t('done')) + '</button>' +
+      '</div></div>';
+
+    document.body.appendChild(mask);
+    const nameInput = mask.querySelector('#pr-name');
+    function saveName() {
+      if (!window.Gallery || !Gallery.renameLook) return;
+      const v = nameInput.value.trim();
+      if (v && v !== rec.name) {
+        rec.name = v;
+        Gallery.renameLook(rec.id, v);
+      }
+    }
+    mask.querySelector('img').onclick = function () { if (window.Gallery) Gallery.preview(rec.img); };
+    mask.querySelector('#pr-close').onclick = function () { saveName(); mask.remove(); };
+    mask.querySelector('#pr-done').onclick = function () { saveName(); mask.remove(); };
+    mask.querySelector('#pr-download').onclick = function () {
+      if (!window.Gallery) return;
+      Gallery.download ? Gallery.download(rec) : (function () {
+        const a = document.createElement('a');
+        a.href = rec.img;
+        a.download = 'look_' + (rec.name || 'dressup') + '.jpg';
+        a.click();
+      })();
+    };
+    mask.querySelector('#pr-gallery').onclick = function () {
+      saveName();
+      mask.remove();
+      if (window.Gallery) Gallery.open();
+    };
+  }
+
   async function take() {
     flash();
     let canvas;
@@ -264,22 +321,29 @@
       return;
     }
 
-    let url;
-    try {
-      // file:// 下浏览器会拦截读取画布像素，这里会抛 SecurityError
-      url = canvas.toDataURL('image/png');
-    } catch (e) {
-      fail();
+    if (!window.Gallery || !Gallery.saveFromCanvas) {
+      // 没有相册模块时退回老的下载方式
+      try {
+        const a = document.createElement('a');
+        a.href = canvas.toDataURL('image/png');
+        a.download = 'look_' + stamp() + '.png';
+        document.body.appendChild(a);
+        a.click();
+        a.remove();
+      } catch (e) { fail(); }
       return;
     }
 
-    const a = document.createElement('a');
-    a.href = url;
-    a.download = 'look_' + stamp() + '.png';
-    document.body.appendChild(a);
-    a.click();
-    a.remove();
-    if (window.App && App.toast) App.toast('photoSaved');
+    try {
+      const rec = await Gallery.saveFromCanvas(canvas, {});
+      showResult(rec);
+    } catch (e) {
+      if (e && e.message === 'no-space') {
+        if (window.App && App.toast) App.toast('photoNoSpace');
+      } else {
+        fail();
+      }
+    }
   }
 
   window.Photo = { take: take, _build: build };
