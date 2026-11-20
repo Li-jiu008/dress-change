@@ -420,8 +420,21 @@
     if (!btn) return;
     let panel = null;
 
+    function clampNum(v, min, max, def) {
+      const n = Number(v);
+      if (!isFinite(n)) return def;
+      return Math.max(min, Math.min(max, n));
+    }
+
     function getCharCfg() {
-      return Object.assign({ scale: 1, x: 0, y: 0, light: 0 }, JSON.parse(localStorage.getItem('dressup_char_cfg') || '{}'));
+      let saved = {};
+      try { saved = JSON.parse(localStorage.getItem('dressup_char_cfg') || '{}') || {}; } catch (e) { saved = {}; }
+      return {
+        scale: clampNum(saved.scale, 0.3, 3, 1),
+        x: clampNum(saved.x, -400, 400, 0),
+        y: clampNum(saved.y, -400, 400, 0),
+        light: clampNum(saved.light, 0, 1, 0)
+      };
     }
     function applyCfg(cfg) {
       const c = $('#character-container');

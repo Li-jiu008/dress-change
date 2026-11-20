@@ -19,6 +19,7 @@
   let db = null;
   let auth = null;
   let readyPromise = null;
+  let sdkPromise = null;
   let uid = null;
   let adminUid = null;
 
@@ -49,25 +50,49 @@
     return db.collection('chats').doc(chatId(uid, otherUid)).collection('msgs');
   }
 
+  async function loadSDK() {
+    if (sdkPromise) return sdkPromise;
+    sdkPromise = (async function () {
+      await loadScript(SDK + 'firebase-app-compat.js');
+      await loadScript(SDK + 'firebase-auth-compat.js');
+      await loadScript(SDK + 'firebase-firestore-compat.js');
+      if (!firebase.apps.length) firebase.initializeApp(cfg());
+      auth = firebase.auth();
+      db = firebase.firestore();
+      return true;
+    })();
+    return sdkPromise;
+  }
+
+  // 初始化 Firebase。没有登录态时先建一个匿名账号，
+  // 这样老玩家的本地进度还能继续用，之后可以「绑定」成正式账号。
   async function boot() {
     if (!configured()) throw new Error('not-configured');
+    await loadSDK();
 
-    await loadScript(SDK + 'firebase-app-compat.js');
-    await loadScript(SDK + 'firebase-auth-compat.js');
-    await loadScript(SDK + 'firebase-firestore-compat.js');
+    if (!auth.currentUser) {
+      const cred = await auth.signInAnonymously();
+      uid = cred.user.uid;
+    } else {
+      uid = auth.currentUser.uid;
+    }
+    try { localStorage.setItem(UID_KEY, uid); } catch (e) {}
 
-    if (!firebase.apps.length) firebase.initializeApp(cfg());
-    auth = firebase.auth();
-    db = firebase.firestore();
+    await afterAuth();
+    return uid;
+  }
 
-    const cred = await auth.signInAnonymously();
-    uid = cred.user.uid;
+  // 登录 / 绑定 / 退出之后都要重新走一遍：记 uid、登记好友码、找管理员
+  async function afterAuth() {
+    if (!auth || !auth.currentUser) return null;
+    uid = auth.currentUser.uid;
     try { localStorage.setItem(UID_KEY, uid); } catch (e) {}
 
     const acc = window.Friends && window.Friends.account ? window.Friends.account() : null;
     if (acc && acc.id) await registerCode(acc.id, acc.name);
 
     // 管理员账号是谁：所有人用好友码 QS-7JFFYV 解析，不写死 Firebase uid
+    adminUid = null;
     try {
       const s = await db.collection('codes').doc(ADMIN_CODE).get();
       if (s.exists) adminUid = (s.data() || {}).uid || null;
@@ -90,6 +115,132 @@
       });
     })();
     return readyPromise;
+  }
+
+  // ---------- 登录方式 ----------
+  // 用户名（英文/数字）会映射成 Firebase 要求的邮箱格式；
+  // 直接填邮箱则原样使用。
+  function emailFor(login) {
+    const raw = String(login || '').trim().toLowerCase();
+    if (!raw) throw new Error('empty-account');
+    if (raw.indexOf('@') > 0) {
+      if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(raw)) throw new Error('bad-email');
+      return raw;
+    }
+    if (/^[a-z0-9._-]{3,24}$/.test(raw)) {
+      return raw + '@players.dress-change.local';
+    }
+    // 中文等非 ASCII 用户名：用 base64url 编成 Firebase 能接受的邮箱
+    try {
+      const bytes = new TextEncoder().encode(raw);
+      let bin = '';
+      for (let i = 0; i < bytes.length; i++) bin += String.fromCharCode(bytes[i]);
+      const b64 = btoa(bin).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
+      if (b64.length > 60) throw new Error('bad-account');
+      return 'u_' + b64 + '@players.dress-change.local';
+    } catch (e) {
+      throw new Error('bad-account');
+    }
+  }
+
+  function authUser() { return auth && auth.currentUser ? auth.currentUser : null; }
+
+  function isAnonymous() {
+    const u = authUser();
+    return !u || u.isAnonymous;
+  }
+
+  function currentEmail() {
+    const u = authUser();
+    if (!u || u.isAnonymous) return '';
+    return u.email || '';
+  }
+
+  function providerIds() {
+    const u = authUser();
+    if (!u) return [];
+    return (u.providerData || []).map(function (p) { return p.providerId; });
+  }
+
+  async function signInGoogle() {
+    if (!auth) throw new Error('not-ready');
+    const provider = new firebase.auth.GoogleAuthProvider();
+    const u = authUser();
+    const beforeUid = u ? u.uid : null;
+
+    // 已经是 Google 账号，直接返回
+    if (u && !u.isAnonymous && providerIds().indexOf('google.com') >= 0) {
+      return { mode: 'already', uid: u.uid, beforeUid: beforeUid };
+    }
+
+    // 匿名账号先尝试「绑定」，uid 不变，本地进度和好友码都保留
+    if (u && u.isAnonymous) {
+      try {
+        await u.linkWithPopup(provider);
+        await afterAuth();
+        return { mode: 'linked', uid: uid, beforeUid: beforeUid };
+      } catch (e) {
+        // 这个 Google 账号已经注册过：改成登录已有账号
+        if (e && (e.code === 'auth/credential-already-in-use' ||
+                  e.code === 'auth/email-already-in-use' ||
+                  e.code === 'auth/provider-already-linked')) {
+          await auth.signInWithPopup(provider);
+          await afterAuth();
+          return { mode: 'switched', uid: uid, beforeUid: beforeUid };
+        }
+        throw e;
+      }
+    }
+
+    // 已登录其他方式：切换成 Google
+    await auth.signInWithPopup(provider);
+    await afterAuth();
+    return { mode: 'switched', uid: uid, beforeUid: beforeUid };
+  }
+
+  // 注册：本机是匿名账号时用 link，uid 不变；否则新建账号
+  async function registerPassword(login, password) {
+    if (!auth) throw new Error('not-ready');
+    const email = emailFor(login);
+    if (String(password || '').length < 6) throw new Error('weak-password');
+    const u = authUser();
+    const beforeUid = u ? u.uid : null;
+    if (u && u.isAnonymous) {
+      const cred = firebase.auth.EmailAuthProvider.credential(email, password);
+      try {
+        await u.linkWithCredential(cred);
+      } catch (e) {
+        if (e && e.code === 'auth/email-already-in-use') throw new Error('account-exists');
+        throw e;
+      }
+      await afterAuth();
+      return { mode: 'linked', uid: uid, beforeUid: beforeUid };
+    }
+    const res = await auth.createUserWithEmailAndPassword(email, password);
+    await afterAuth();
+    return { mode: 'created', uid: res.user.uid, beforeUid: beforeUid };
+  }
+
+  // 登录已有账号：会切换到该账号的 uid
+  async function loginPassword(login, password) {
+    if (!auth) throw new Error('not-ready');
+    const email = emailFor(login);
+    if (String(password || '').length < 6) throw new Error('weak-password');
+    const u = authUser();
+    const beforeUid = u ? u.uid : null;
+    await auth.signInWithEmailAndPassword(email, password);
+    await afterAuth();
+    return { mode: 'switched', uid: uid, beforeUid: beforeUid };
+  }
+
+  async function signOutNow() {
+    if (!auth) return false;
+    await auth.signOut();
+    uid = null;
+    adminUid = null;
+    readyPromise = null;
+    try { localStorage.removeItem(UID_KEY); } catch (e) {}
+    return true;
   }
 
   async function registerCode(code, name) {
@@ -453,6 +604,65 @@
     return true;
   }
 
+  // ---------- 公告板 ----------
+  // announcements/{id}: { title, content, pinned, author, createdAt, updatedAt }
+  async function createAnnouncement(title, content, pinned) {
+    if (!db || !uid) throw new Error('not-ready');
+    const body = String(content || '').trim().slice(0, 1000);
+    const head = String(title || '').trim().slice(0, 40);
+    if (!head || !body) throw new Error('empty');
+    await db.collection('announcements').add({
+      title: head,
+      content: body,
+      pinned: !!pinned,
+      author: author(),
+      createdAt: Date.now(),
+      updatedAt: Date.now()
+    });
+    return true;
+  }
+
+  async function updateAnnouncement(id, title, content, pinned) {
+    if (!db || !uid) throw new Error('not-ready');
+    if (!id) throw new Error('no-target');
+    const body = String(content || '').trim().slice(0, 1000);
+    const head = String(title || '').trim().slice(0, 40);
+    if (!head || !body) throw new Error('empty');
+    await db.collection('announcements').doc(id).update({
+      title: head,
+      content: body,
+      pinned: !!pinned,
+      updatedAt: Date.now()
+    });
+    return true;
+  }
+
+  async function deleteAnnouncement(id) {
+    if (!db || !uid) throw new Error('not-ready');
+    if (!id) throw new Error('no-target');
+    await db.collection('announcements').doc(id).delete();
+    return true;
+  }
+
+  function listenAnnouncements(onChange) {
+    if (!db || !uid) return function () {};
+    return db.collection('announcements').onSnapshot(function (snap) {
+      const list = [];
+      snap.forEach(function (d) {
+        const v = d.data() || {};
+        v._id = d.id;
+        list.push(v);
+      });
+      list.sort(function (a, b) {
+        if (!!b.pinned !== !!a.pinned) return b.pinned ? 1 : -1;
+        return (b.createdAt || 0) - (a.createdAt || 0);
+      });
+      onChange(list);
+    }, function (err) {
+      console.warn('[cloud] 公告监听失败：', err);
+    });
+  }
+
   // ---------- 反馈箱 ----------
   // feedback/{id}: { uid, code, name, content, createdAt, status, reply?, repliedAt? }
   async function sendFeedback(content) {
@@ -510,6 +720,14 @@
     uid: function () { return uid; },
     adminUid: function () { return adminUid; },
     isAdmin: function () { return !!uid && uid === adminUid; },
+    isAnonymous: isAnonymous,
+    email: currentEmail,
+    providers: providerIds,
+    signInGoogle: signInGoogle,
+    registerPassword: registerPassword,
+    loginPassword: loginPassword,
+    signOut: signOutNow,
+    emailFor: emailFor,
     ADMIN_CODE: ADMIN_CODE,
     registerCode: registerCode,
     resolveCode: resolveCode,
@@ -534,6 +752,10 @@
     updateTrade: updateTrade,
     sendFeedback: sendFeedback,
     listenFeedback: listenFeedback,
-    replyFeedback: replyFeedback
+    replyFeedback: replyFeedback,
+    createAnnouncement: createAnnouncement,
+    updateAnnouncement: updateAnnouncement,
+    deleteAnnouncement: deleteAnnouncement,
+    listenAnnouncements: listenAnnouncements
   };
 })();

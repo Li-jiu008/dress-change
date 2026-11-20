@@ -2,10 +2,22 @@ rules_version = '2';
 service cloud.firestore {
   match /databases/{database}/documents {
 
-    // 好友码 → 云端身份（谁都能读，用来加好友；登录后能写）
+    // 管理员账号：好友码 QS-7JFFYV 在 codes 里登记的那个 uid
+    function isAdmin() {
+      return request.auth != null
+        && exists(/databases/$(database)/documents/codes/QS-7JFFYV)
+        && get(/databases/$(database)/documents/codes/QS-7JFFYV).data.uid == request.auth.uid;
+    }
+
+    // 好友码 → 云端身份（谁都能读，用来加好友；只能本人登记/更新自己的码）
     match /codes/{code} {
       allow read: if true;
-      allow write: if request.auth != null;
+      allow create: if request.auth != null
+                    && request.resource.data.uid == request.auth.uid;
+      allow update: if request.auth != null
+                    && resource.data.uid == request.auth.uid
+                    && request.resource.data.uid == request.auth.uid;
+      allow delete: if false;
     }
 
     // 自己的账号资料
@@ -77,6 +89,41 @@ service cloud.firestore {
       allow update: if request.auth != null && request.auth.uid in resource.data.members;
       allow delete: if false;
     }
+
+    // 反馈箱：谁都能提交；只有管理员能读和回复
+    match /feedback/{fid} {
+      allow create: if request.auth != null
+                    && request.resource.data.uid == request.auth.uid
+                    && request.resource.data.content is string
+                    && request.resource.data.content.size() <= 500;
+      allow read: if isAdmin();
+      allow update: if isAdmin()
+                    && request.resource.data.diff(resource.data).affectedKeys()
+                       .hasOnly(['reply', 'repliedAt', 'status']);
+      allow delete: if false;
+    }
+
+    // 云存档：只有本人能读写自己的存档和分块
+    match /saves/{uid} {
+      allow read, write: if request.auth != null && request.auth.uid == uid;
+
+      match /chunks/{cid} {
+        allow read, write: if request.auth != null && request.auth.uid == uid;
+      }
+    }
+
+    // 公告板：所有玩家可看，只有管理员能发/改/删
+    match /announcements/{aid} {
+      allow read: if true;
+      allow create: if isAdmin()
+                    && request.resource.data.title is string
+                    && request.resource.data.title.size() <= 40
+                    && request.resource.data.content is string
+                    && request.resource.data.content.size() <= 1000;
+      allow update: if isAdmin()
+                    && request.resource.data.diff(resource.data).affectedKeys()
+                       .hasOnly(['title', 'content', 'pinned', 'updatedAt']);
+      allow delete: if isAdmin();
+    }
   }
 }
-

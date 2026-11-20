@@ -110,10 +110,22 @@
 
     img.src = file;
     img.onerror = function () {
+      // 正式 PNG 没加载到（换设备、上传漏文件、缓存坏掉）时，退回程序画的身体/头发/衣服，
+      // 不能直接 display:none，否则整个人物会凭空消失。
+      if (fallbackKey && this.dataset.fallback !== '1' && window.Assets && Assets.getPlaceholderDataURL) {
+        this.dataset.fallback = '1';
+        this.src = Assets.getPlaceholderDataURL(fallbackKey);
+        return;
+      }
       this.onerror = null;
       this.style.display = 'none';
     };
-    if (onRealLoad) img.onload = onRealLoad;
+    if (onRealLoad) {
+      img.onload = function () {
+        if (this.dataset.fallback === '1') return;
+        onRealLoad.call(this);
+      };
+    }
     return img;
   }
 

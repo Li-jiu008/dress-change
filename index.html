@@ -8,6 +8,37 @@
 </head>
 <body>
 
+  <!-- ========== 登录 / 云存档 ========== -->
+  <div id="auth-overlay" class="auth-overlay">
+    <div class="auth-card">
+      <div class="auth-label">CLOUD WARDROBE</div>
+      <h2 class="auth-title">登录，让衣橱跟着你</h2>
+      <p class="auth-sub">换电脑、换手机也能穿回同一套。游客进度只留在这台设备。</p>
+
+      <div id="auth-admin-tip" class="auth-admin-tip">🛡 本机是管理员账号 <b>QS-7JFFYV</b>。请点下方「注册 / 绑定本机进度」，把管理员身份绑定到新账号。</div>
+
+      <button id="auth-google" class="auth-google" type="button">
+        <span class="g-mark">G</span> 使用 Google 登录
+      </button>
+
+      <div class="auth-or"><span>或</span></div>
+
+      <form id="auth-form" autocomplete="on">
+        <input id="auth-account" class="auth-input" type="text" placeholder="邮箱，或用户名（中英文都行）" autocomplete="username">
+        <input id="auth-password" class="auth-input" type="password" placeholder="密码（至少 6 位）" autocomplete="current-password">
+        <div class="auth-row">
+          <button id="auth-login" class="auth-primary" type="submit">登录</button>
+          <button id="auth-register" class="auth-secondary" type="button">注册 / 绑定本机进度</button>
+        </div>
+      </form>
+
+      <div id="auth-status" class="auth-status"></div>
+
+      <button id="auth-guest" class="auth-guest" type="button">先以游客身份进入</button>
+      <p class="auth-note">首次用 Google 或注册时，会把本机现有衣服和金币一起绑定，不会丢。</p>
+    </div>
+  </div>
+
   <!-- ========== 语言切换（封面/房间均可见） ========== -->
   <button id="btn-lang" class="lang-toggle" title="切换语言 / Cambia lingua">IT</button>
 
@@ -28,7 +59,14 @@
       <img src="assets/ui/coin.png" style="width:26px;height:26px;object-fit:contain;" alt="coin">
       <span id="coin-num">0</span>
       <button id="btn-char-set" style="margin-left:8px;background:none;border:none;cursor:pointer;font-size:18px;" title="人物设置">⚙</button>
+      <button id="btn-account" class="account-dot" title="登录 / 云存档">👤</button>
     </div>
+
+    <!-- 左上角公告板 -->
+    <button id="btn-announce" class="announce-btn" title="活动公告">
+      📢 <span>公告</span>
+      <span id="announce-dot" class="announce-dot"></span>
+    </button>
 
     <!-- 角色容器：统一 1000×1400 坐标系 -->
     <div id="character-container" class="character-container"></div>
@@ -112,6 +150,9 @@
   <script src="js/friends.js"></script>
   <script src="js/firebase-config.js"></script>
   <script src="js/cloud.js"></script>
+  <script src="js/savecloud.js"></script>
+  <script src="js/auth.js"></script>
+  <script src="js/announce.js"></script>
   <script src="js/chat.js"></script>
   <script src="js/mailbox.js"></script>
   <script src="js/photo.js"></script>
