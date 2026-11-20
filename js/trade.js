@@ -8,13 +8,14 @@
  *   买家看到价格 → 付款（扣金币），衣服进入自己衣橱
  *   卖家 → 领取金币，交易完成
  *
- * 价格区间由系统按分类给出，卖家只能在区间内定价。
- * 卖家可以拒绝；买家在付款前也可以取消。
+ * 价格区间由系统按分类给出（基础价的 50% ~ 400%），
+ * 手工自制的衣服本来就该贵一些，所以上限给得比较宽。
+ * 卖家只能在区间内定价，可以拒绝；买家在付款前也可以取消。
  * ========================================================= */
 (function () {
   'use strict';
 
-  const BASE = { top: 60, bottom: 50, dress: 100, outer: 80, socks: 30, shoes: 45, neckAcc: 40, headAcc: 60, handAcc: 40, hair: 50, eyes: 20, mouth: 20 };
+  const BASE = { top: 60, bottom: 50, dress: 100, outer: 80, socks: 30, shoes: 45, neckAcc: 40, headAcc: 60, handAcc: 40, hair: 50, eyes: 20, mouth: 20, scene: 100 };
   const DEFAULT_BASE = 50;
 
   let trades = [];
@@ -35,7 +36,8 @@
 
   function rangeFor(category) {
     const b = BASE[category] || DEFAULT_BASE;
-    return { min: round5(b * 0.5), max: round5(b * 2) };
+    // 下限 50%，上限 400%：自制衣服是手工产物，允许卖得比商城贵不少
+    return { min: round5(b * 0.5), max: round5(b * 4) };
   }
 
   /* ---------- 发布时把自制衣服登记到云端 ---------- */
@@ -65,6 +67,9 @@
     if (!ok) { toast('communityOffline'); return; }
 
     const item = await Cloud.getItem(shopItem.docId);
+    // 区间按当前规则实时算，老帖子里存的旧区间也跟着更新
+    const range = rangeFor(shopItem.category);
+    const offer = Object.assign({}, shopItem, { min: range.min, max: range.max });
     const mask = document.createElement('div');
     mask.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,.45);z-index:165;display:flex;align-items:center;justify-content:center;';
     mask.innerHTML = '<div style="background:#fff;border-radius:16px;width:330px;max-width:92vw;overflow:hidden;box-shadow:0 10px 40px rgba(0,0,0,.28);">' +
@@ -73,7 +78,7 @@
         (item && item.src ? '<img src="' + escapeHtml(item.src) + '" style="width:100%;max-height:220px;object-fit:contain;background:#fdf6f9;border-radius:10px;display:block;">' : '') +
         '<div style="font-size:13px;font-weight:600;color:#4a2b38;margin-top:8px;">' + escapeHtml(shopItem.name) + '</div>' +
         '<div style="font-size:11px;color:#b08a9b;margin-top:4px;">' + t('tradeSeller') + '：' + escapeHtml((post.author && (post.author.name || post.author.id)) || '') + '</div>' +
-        '<div style="font-size:11px;color:#b08a9b;margin-top:2px;">' + t('tradeRangeHint') + ' ' + shopItem.min + ' – ' + shopItem.max + ' ' + t('coins') + '</div>' +
+        '<div style="font-size:11px;color:#b08a9b;margin-top:2px;">' + t('tradeRangeHint') + ' ' + offer.min + ' – ' + offer.max + ' ' + t('coins') + '</div>' +
         '<div style="font-size:11px;color:#b08a9b;line-height:1.7;margin-top:6px;">' + t('tradeRequestHint') + '</div>' +
       '</div>' +
       '<div style="padding:11px 14px;border-top:1px solid #f0e6ec;display:flex;gap:8px;">' +
@@ -85,7 +90,7 @@
     mask.querySelector('#tr-ok').onclick = async function () {
       this.disabled = true;
       try {
-        await Cloud.createTrade(post, shopItem);
+        await Cloud.createTrade(post, offer);
         mask.remove();
         toast('tradeRequested');
       } catch (e) {
@@ -291,6 +296,12 @@
     const item = await Cloud.getItem(tr.itemDocId);
     if (!item || !item.src) { busy[tradeId] = false; toast('tradeItemMissing'); return; }
 
+    // 买背景：先确认背景库还有位置、且没买过同一张，避免付了钱拿不到
+    if (item.category === 'scene' && window.Scene) {
+      if (Scene.get(item.itemId)) { busy[tradeId] = false; toast('你已经拥有这个背景了'); return; }
+      if (Scene.list().length >= (Scene.limit || 10)) { busy[tradeId] = false; toast('背景库满了，先删掉一张再买'); return; }
+    }
+
     try {
       await Cloud.updateTrade(tradeId, { status: 'paid', paidAt: Date.now() });
     } catch (e) { busy[tradeId] = false; toast(errKey(e)); return; }
@@ -299,9 +310,16 @@
     if (window.State) State.persistSave(save);
     if (window.App && App.updateCoinHUD) App.updateCoinHUD();
 
-    Wardrobe.receiveItems([{
-      id: item.itemId, name: item.name, category: item.category, src: item.src
-    }]);
+    if (item.category === 'scene' && window.Scene) {
+      // 买的是背景：进买家的背景库，不占衣橱格子
+      Scene.receive([{
+        id: item.itemId, name: item.name, src: item.src
+      }]);
+    } else {
+      Wardrobe.receiveItems([{
+        id: item.itemId, name: item.name, category: item.category, src: item.src
+      }]);
+    }
     busy[tradeId] = false;
     toast('tradePaidDone');
   }

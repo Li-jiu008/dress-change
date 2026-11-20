@@ -45,6 +45,9 @@
       const it = window.Items && Items.getItem ? Items.getItem(id) : null;
       if (it && it.isCustom && it.src) out.push(it);
     });
+    // 这张照片里用到的「自己导入的房间背景」也算自制内容，可以一起卖
+    const bg = window.Scene ? Scene.itemForLook(look) : null;
+    if (bg && bg.src) out.push(bg);
     return out;
   }
 

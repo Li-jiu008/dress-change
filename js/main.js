@@ -92,9 +92,13 @@
       const realBg = new Image();
       realBg.onload = function () {
         roomBg.style.backgroundImage = 'url("assets/backgrounds/room.png")';
+        // 默认房间图加载完再盖一次自定义背景，否则会被异步 onload 覆盖
+        if (window.Scene && Scene.home()) Scene.applyHome();
       };
       realBg.src = 'assets/backgrounds/room.png';
     }
+    // 玩家导入过房间背景的话，用自己那张（cover 铺满，尺寸不合适自动裁切）
+    if (window.Scene && Scene.home()) Scene.applyHome();
 
     // 封面 → 房间
     $('#btn-start').addEventListener('click', function () {
@@ -115,6 +119,17 @@
       };
     }
     initCharSettings();
+
+    // 全局 Ctrl+Z：撤回最近操作的那个面板的上一一步（衣服调整 / 人物设置）
+    document.addEventListener('keydown', function (e) {
+      if (!(e.ctrlKey || e.metaKey)) return;
+      if (String(e.key || '').toLowerCase() !== 'z') return;
+      const fn = window.__activeUndo;
+      if (typeof fn === 'function') {
+        e.preventDefault();
+        fn();
+      }
+    });
 
     // 身体面板（像衣柜一样竖排展示）
     $('#btn-body').addEventListener('click', function () {
@@ -271,9 +286,14 @@
           return '<button data-loc="' + loc.id + '" style="padding:16px;border:2px solid #f0d0dc;border-radius:12px;background:#fdf6f9;cursor:pointer;font-size:15px;color:#8a3b55;">' +
             loc.emoji + ' ' + I18N.t(loc.nameKey) + '</button>';
         }).join('') +
+        (window.Scene ? Scene.list().map(function(bg) {
+          return '<button data-bgid="' + bg.id + '" style="padding:16px;border:2px solid #e7c9dc;border-radius:12px;background:#fff;cursor:pointer;font-size:15px;color:#8a3b55;">🖼 ' + String(bg.name).replace(/[<>&"]/g, function(c){ return {'<':'&lt;','>':'&gt;','&':'&amp;','"':'&quot;'}[c]; }) + '</button>';
+        }).join('') : '') +
+        '<button data-scene-lib="1" style="padding:16px;border:2px dashed #b07aa0;border-radius:12px;background:#fff;cursor:pointer;font-size:14px;color:#8a3b55;">🖼 ' + '背景库 / 导入' + '</button>' +
         '<button data-loc="random" style="padding:16px;border:2px dashed #d4719a;border-radius:12px;background:#fff;cursor:pointer;font-size:15px;color:#d4719a;font-weight:600;">🎲 ' + I18N.t('random') + '</button>' +
         '</div>' +
-        '<button id="loc-map-cancel" style="margin-top:16px;width:100%;padding:10px;border:1px solid #ddd;background:#fff;border-radius:10px;cursor:pointer;color:#666;">' + I18N.t('cancel') + '</button>' +
+        '<button id="loc-map-home" style="margin-top:14px;width:100%;padding:10px;border:1px solid #d4719a;background:#fff;color:#8a3b55;border-radius:10px;cursor:pointer;">🏠 ' + I18N.t('gohome') + '</button>' +
+        '<button id="loc-map-cancel" style="margin-top:8px;width:100%;padding:10px;border:1px solid #ddd;background:#fff;border-radius:10px;cursor:pointer;color:#666;">' + I18N.t('cancel') + '</button>' +
         '</div>';
 
       map.querySelectorAll('[data-loc]').forEach(function(btn) {
@@ -289,16 +309,59 @@
           goToLocation(loc);
         };
       });
+      map.querySelectorAll('[data-bgid]').forEach(function(btn) {
+        btn.onclick = function() {
+          const rec = window.Scene ? Scene.get(this.getAttribute('data-bgid')) : null;
+          map.remove();
+          if (rec) goToLocation({ id: rec.id, name: rec.name, bg: rec.src, emoji: '🖼', custom: true });
+        };
+      });
+      const libBtn = map.querySelector('[data-scene-lib]');
+      if (libBtn) libBtn.onclick = function() {
+        map.remove();
+        openSceneLibrary();
+      };
       map.querySelector('#loc-map-cancel').onclick = function() { map.remove(); };
+      map.querySelector('#loc-map-home').onclick = function() { map.remove(); goHome(); };
+    }
+
+    function openSceneLibrary() {
+      if (!window.Scene) return;
+      Scene.openLibrary({
+        onGo: function(rec) {
+          if (rec) goToLocation({ id: rec.id, name: rec.name, bg: rec.src, emoji: '🖼', custom: true });
+        },
+        onHome: function() {
+          if (!goingOut) Scene.applyHome();
+        }
+      });
+    }
+
+    // 进入场景/回到房间时光影都归 0（不同背景配旧光斑会很怪）
+    function zeroLight() {
+      const c = document.querySelector('#character-container');
+      if (c) c.style.setProperty('--light-i', '0');
+      try {
+        const cfg = JSON.parse(localStorage.getItem('dressup_char_cfg') || '{}');
+        cfg.light = 0;
+        localStorage.setItem('dressup_char_cfg', JSON.stringify(cfg));
+      } catch (e) {}
     }
 
     function goToLocation(loc) {
       goingOut = true;
       const roomBg = $('#room-bg');
+      const isCustom = !!loc.custom;
       roomBg.style.backgroundImage = 'url("' + loc.bg + '")';
-      roomBg.style.backgroundSize = '80% auto';
-      roomBg.style.backgroundPosition = 'center bottom';
+      // 自己导入的背景统一 cover：不管尺寸都铺满居中，多余部分自动裁掉
+      roomBg.style.backgroundSize = isCustom ? 'cover' : '80% auto';
+      roomBg.style.backgroundPosition = isCustom ? 'center center' : 'center bottom';
       roomBg.style.backgroundRepeat = 'no-repeat';
+      if (window.Scene) {
+        if (isCustom) Scene.setCurrent('custom', Scene.get(loc.id) || { id: loc.id, name: loc.name });
+        else Scene.setCurrent('builtin', null);
+      }
+      zeroLight();
 
       $('#btn-wardrobe').style.display = 'none';
       $('#btn-shop').style.display = 'none';
@@ -312,7 +375,7 @@
         banner.style.cssText = 'position:fixed;top:30px;left:50%;transform:translateX(-50%);background:rgba(255,255,255,.92);padding:10px 28px;border-radius:30px;font-size:20px;font-weight:600;color:#8a3b55;box-shadow:0 4px 16px rgba(0,0,0,.2);z-index:50;';
         document.body.appendChild(banner);
       }
-      banner.textContent = loc.emoji + ' ' + I18N.t(loc.nameKey);
+      banner.textContent = loc.emoji + ' ' + (isCustom ? loc.name : I18N.t(loc.nameKey));
       banner.style.display = 'block';
 
       const goBtn = $('#btn-goout');
@@ -323,9 +386,16 @@
     function goHome() {
       goingOut = false;
       const roomBg = $('#room-bg');
-      roomBg.style.backgroundImage = 'url("assets/backgrounds/room.png")';
-      roomBg.style.backgroundSize = 'cover';
-      roomBg.style.backgroundPosition = 'center bottom';
+      if (!(window.Scene && Scene.home() && Scene.applyHome())) {
+        if (window.Scene && Scene.applyDefault) Scene.applyDefault();
+        else {
+          roomBg.style.backgroundImage = 'url("assets/backgrounds/room.png")';
+          roomBg.style.backgroundSize = 'cover';
+          roomBg.style.backgroundPosition = 'center bottom';
+        }
+      }
+      if (window.Scene) Scene.setCurrent('home', null);
+      zeroLight();
       const banner = $('#loc-banner');
       if (banner) banner.style.display = 'none';
 
@@ -339,6 +409,9 @@
       goBtn.innerHTML = '🚪 <span>' + I18N.t('goout') + '</span>';
       goBtn.onclick = function(e) { e.stopPropagation(); goOut(); };
     }
+
+    // 给背景库用：判断是否在自定义场景里、并统一退回房间
+    window.Room = { goHome: goHome, isGoingOut: function () { return goingOut; } };
   }
 
   // 人物设置面板（缩放/移动）
@@ -348,14 +421,14 @@
     let panel = null;
 
     function getCharCfg() {
-      return Object.assign({ scale: 1, x: 0, y: 0, light: 0.8 }, JSON.parse(localStorage.getItem('dressup_char_cfg') || '{}'));
+      return Object.assign({ scale: 1, x: 0, y: 0, light: 0 }, JSON.parse(localStorage.getItem('dressup_char_cfg') || '{}'));
     }
     function applyCfg(cfg) {
       const c = $('#character-container');
       if (!c) return;
       const panelShift = document.body.classList.contains('panel-open') ? -210 : 0;
       c.style.transform = 'translateX(calc(-50% + ' + panelShift + 'px)) scale(' + cfg.scale + ') translate(' + cfg.x + 'px,' + cfg.y + 'px)';
-      c.style.setProperty('--light-i', String(typeof cfg.light === 'number' ? cfg.light : 0.8));
+      c.style.setProperty('--light-i', String(typeof cfg.light === 'number' ? cfg.light : 0));
     }
 
     btn.onclick = function () {
@@ -371,10 +444,11 @@
         '<input type="range" id="cs-x" min="-400" max="400" step="1" value="' + cfg.x + '" style="width:100%;">' +
         '<label style="display:block;margin:4px 0;">上下 <span id="cs-y-v">' + cfg.y.toFixed(1) + '</span></label>' +
         '<input type="range" id="cs-y" min="-400" max="400" step="1" value="' + cfg.y + '" style="width:100%;">' +
-        '<label style="display:block;margin:4px 0;">光影 <span id="cs-light-v">' + Math.round((cfg.light === undefined ? 0.8 : cfg.light) * 100) + '%</span></label>' +
-        '<input type="range" id="cs-light" min="0" max="100" step="1" value="' + Math.round((cfg.light === undefined ? 0.8 : cfg.light) * 100) + '" style="width:100%;">' +
-        '<button id="cs-reset" style="margin-top:8px;padding:5px 12px;border:1px solid #d4719a;background:#fff;color:#d4719a;border-radius:6px;cursor:pointer;">重置</button>' +
-        '<button id="cs-close" style="margin-top:8px;margin-left:6px;padding:5px 12px;background:#d4719a;color:#fff;border:none;border-radius:6px;cursor:pointer;">关闭</button>';
+        '<label style="display:block;margin:4px 0;">光影 <span id="cs-light-v">' + Math.round((cfg.light === undefined ? 0 : cfg.light) * 100) + '%</span></label>' +
+        '<input type="range" id="cs-light" min="0" max="100" step="1" value="' + Math.round((cfg.light === undefined ? 0 : cfg.light) * 100) + '" style="width:100%;">' +
+        '<button id="cs-undo" style="margin-top:8px;padding:5px 10px;border:1px solid #b07aa0;background:#fff;color:#8a3b55;border-radius:6px;cursor:pointer;">↩ 撤回</button>' +
+        '<button id="cs-reset" style="margin-top:8px;margin-left:6px;padding:5px 10px;border:1px solid #d4719a;background:#fff;color:#d4719a;border-radius:6px;cursor:pointer;">重置</button>' +
+        '<button id="cs-close" style="margin-top:8px;margin-left:6px;padding:5px 10px;background:#d4719a;color:#fff;border:none;border-radius:6px;cursor:pointer;">关闭</button>';
       document.body.appendChild(panel);
 
       function upd() {
@@ -395,18 +469,67 @@
       panel.querySelector('#cs-x').oninput = upd;
       panel.querySelector('#cs-y').oninput = upd;
       panel.querySelector('#cs-light').oninput = upd;
+
+      // ===== 撤回上一步（Ctrl+Z / ↩ 撤回），只回退一次改动，不是重置 =====
+      function curVal() {
+        return {
+          scale: parseFloat(panel.querySelector('#cs-scale').value),
+          x: parseFloat(panel.querySelector('#cs-x').value),
+          y: parseFloat(panel.querySelector('#cs-y').value),
+          light: parseFloat(panel.querySelector('#cs-light').value)
+        };
+      }
+      function setVal(v) {
+        panel.querySelector('#cs-scale').value = v.scale;
+        panel.querySelector('#cs-x').value = v.x;
+        panel.querySelector('#cs-y').value = v.y;
+        panel.querySelector('#cs-light').value = v.light;
+        upd();
+      }
+      function pushSnap(v) {
+        panel._undo = panel._undo || [];
+        panel._undo.push(v);
+        if (panel._undo.length > 30) panel._undo.shift();
+      }
+      function undoOne() {
+        const arr = panel._undo || [];
+        if (!arr.length) return;
+        setVal(arr.pop());
+      }
+      panel._undoFn = undoOne;
+      window.__activeUndo = undoOne;
+      panel.addEventListener('pointerdown', function () { window.__activeUndo = undoOne; });
+      panel._undo = [];
+      let beforeCs = null;
+      ['#cs-scale', '#cs-x', '#cs-y', '#cs-light'].forEach(function (sel) {
+        const el = panel.querySelector(sel);
+        el.addEventListener('pointerdown', function () { beforeCs = curVal(); });
+        el.addEventListener('focus', function () { beforeCs = curVal(); });
+        el.addEventListener('change', function () {
+          if (beforeCs && JSON.stringify(beforeCs) !== JSON.stringify(curVal())) pushSnap(beforeCs);
+          beforeCs = null;
+        });
+      });
+      panel.querySelector('#cs-undo').onclick = function () { undoOne(); };
       panel.querySelector('#cs-reset').onclick = function () {
+        pushSnap(curVal());
         panel.querySelector('#cs-scale').value = 1;
         panel.querySelector('#cs-x').value = 0;
         panel.querySelector('#cs-y').value = 0;
-        panel.querySelector('#cs-light').value = 80;
+        panel.querySelector('#cs-light').value = 0;
         upd();
       };
-      panel.querySelector('#cs-close').onclick = function () { panel.remove(); panel = null; };
+      panel.querySelector('#cs-close').onclick = function () {
+        if (window.__activeUndo === undoOne) window.__activeUndo = null;
+        panel.remove(); panel = null;
+      };
     };
 
-    // 初始化时应用已保存的设置
-    applyCfg(getCharCfg());
+    // 初始化时应用已保存的设置；光影默认 0（进场不铺光斑）
+    const cfgInit = getCharCfg();
+    cfgInit.light = 0;
+    try { localStorage.setItem('dressup_char_cfg', JSON.stringify(cfgInit)); } catch (e) {}
+    applyCfg(cfgInit);
 
     // 监听 panel-open 变化，重新应用偏移
     const obs = new MutationObserver(function () { applyCfg(getCharCfg()); });

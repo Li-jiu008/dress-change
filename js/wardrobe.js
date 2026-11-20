@@ -14,6 +14,75 @@
 
   let currentCat = 'all';
 
+  // 当前「⚙ 调整」面板正在调哪一件，换装时自动跟着切过去
+  let adjustCtx = null;        // { item, save }
+  let openingAdjust = false;   // 防止 openAdjustPanel 内部穿衣服时又触发一次切换
+
+  /* ---------- 衣服图层的统一撤回（面板调整 + 鼠标拖动共用一个历史） ---------- */
+  const LAYER_UNDO_MAX = 40;
+  const layerUndo = [];
+
+  function readJsonMap(key) {
+    try { return JSON.parse(localStorage.getItem(key) || '{}'); }
+    catch (e) { return {}; }
+  }
+
+  // 一件衣服当前的两份状态：调整面板的 transforms + 鼠标拖动的 drag 偏移
+  function captureLayerState(itemId) {
+    if (!itemId) return null;
+    const tr = readJsonMap('dressup_transforms')[itemId] || null;
+    const dg = readJsonMap('dressup_layer_drag')[itemId] || null;
+    return {
+      itemId: itemId,
+      tr: tr ? JSON.parse(JSON.stringify(tr)) : null,
+      drag: dg ? { x: dg.x || 0, y: dg.y || 0 } : null
+    };
+  }
+
+  function sameLayerState(a, b) {
+    if (!a || !b) return false;
+    return JSON.stringify([a.tr, a.drag]) === JSON.stringify([b.tr, b.drag]);
+  }
+
+  function pushUndoState(itemId, before) {
+    const st = before || captureLayerState(itemId);
+    if (!st) return;
+    const last = layerUndo[layerUndo.length - 1];
+    if (last && last.itemId === st.itemId && sameLayerState(last, st)) return;
+    layerUndo.push(st);
+    if (layerUndo.length > LAYER_UNDO_MAX) layerUndo.shift();
+    window.__activeUndo = undoLayer;
+  }
+
+  function restoreLayerState(st) {
+    if (!st) return;
+    const trs = readJsonMap('dressup_transforms');
+    if (st.tr) trs[st.itemId] = st.tr;
+    else delete trs[st.itemId];
+    localStorage.setItem('dressup_transforms', JSON.stringify(trs));
+
+    const dgs = readJsonMap('dressup_layer_drag');
+    if (st.drag) dgs[st.itemId] = st.drag;
+    else delete dgs[st.itemId];
+    localStorage.setItem('dressup_layer_drag', JSON.stringify(dgs));
+
+    if (window.Renderer && window.App && App.save) {
+      Renderer.renderCharacter(document.getElementById('character-container'), App.save);
+    }
+
+    // 面板正开在这件上：重开一次，让滑杆显示撤回后的值
+    const adj = document.getElementById('adjust-panel');
+    if (adj && adjustCtx && adjustCtx.item.id === st.itemId) {
+      openAdjustPanel(adjustCtx.item, adjustCtx.save);
+    }
+  }
+
+  function undoLayer() {
+    if (!layerUndo.length) return false;
+    restoreLayerState(layerUndo.pop());
+    return true;
+  }
+
   function $(sel) { return document.querySelector(sel); }
 
   function open() {
@@ -69,6 +138,27 @@
     State.persistSave(save);
     Renderer.renderCharacter($('#character-container'), save);
     renderItems();
+    syncAdjustAfterWear(item, save);
+  }
+
+  // 换了衣服后，如果调整面板还开着，就自动切到刚穿上的这一件
+  function syncAdjustAfterWear(item, save) {
+    if (openingAdjust) return;
+    const panel = document.getElementById('adjust-panel');
+    // 面板不在：没有可跟随的对象
+    if (!panel) { adjustCtx = null; return; }
+    if (!isEquipped(item, save)) {
+      // 刚点的这件被脱掉了：如果面板正在调它，就一起关掉
+      if (adjustCtx && adjustCtx.item.id === item.id) {
+        panel.remove();
+        adjustCtx = null;
+        window.__activeUndo = null;
+      }
+      return;
+    }
+    if (adjustCtx && adjustCtx.item.id === item.id) return;
+    // 不管 adjustCtx 有没有同步上，只要面板开着、这件穿上了，就切过去
+    openAdjustPanel(item, save);
   }
 
   // 渲染服装网格
@@ -203,6 +293,8 @@
 
   // 调整衣服大小位置
   function openAdjustPanel(item, save) {
+    openingAdjust = true;
+    try {
     // 先穿上这件衣服预览
     if (!isEquipped(item, save)) toggleEquip(item, save);
 
@@ -245,6 +337,7 @@
       '<label style="display:block;font-size:12px;margin:3px 0;">' + I18N.t('upDown') + ' <span id="adj-y-v">' + cur.y + '</span></label>' +
       '<input type="range" id="adj-y" min="-240" max="240" step="0.1" value="' + cur.y + '" style="width:100%;">' +
       '<div style="display:flex;gap:6px;margin-top:10px;">' +
+      '<button id="adj-undo" style="flex:1;padding:7px;border:1px solid #b07aa0;background:#fff;color:#8a3b55;border-radius:8px;cursor:pointer;font-size:12px;">↩ 撤回</button>' +
       '<button id="adj-reset" style="flex:1;padding:7px;border:1px solid #d4719a;background:#fff;color:#d4719a;border-radius:8px;cursor:pointer;font-size:12px;">↺ 重置</button>' +
       '<button id="adj-done" style="flex:1;padding:7px;background:#d4719a;color:#fff;border:none;border-radius:8px;cursor:pointer;font-size:12px;">' + I18N.t('done') + '</button>' +
       '</div>';
@@ -289,7 +382,29 @@
       adj.querySelector('#adj-all-v').textContent = v;
       apply();
     };
+    // ===== 撤回上一步（Ctrl+Z / ↩ 撤回）：滑杆和鼠标拖动共用同一个历史 =====
+    let beforeA = null;
+    function beginA() {
+      beforeA = captureLayerState(item.id);
+      window.__activeUndo = undoLayer;
+    }
+    window.__activeUndo = undoLayer;
+    adj.addEventListener('pointerdown', function () { window.__activeUndo = undoLayer; });
+    ['#adj-all', '#adj-sx', '#adj-sy', '#adj-rot', '#adj-x', '#adj-y'].forEach(function (sel) {
+      const el = adj.querySelector(sel);
+      if (!el) return;
+      el.addEventListener('pointerdown', beginA);
+      el.addEventListener('focus', beginA);
+      el.addEventListener('change', function () {
+        const now = captureLayerState(item.id);
+        if (beforeA && !sameLayerState(beforeA, now)) pushUndoState(item.id, beforeA);
+        beforeA = null;
+      });
+    });
+    adj.querySelector('#adj-undo').onclick = function () { undoLayer(); };
     adj.querySelector('#adj-reset').onclick = function () {
+      // 重置本身也进历史，Ctrl+Z 能退回重置前
+      pushUndoState(item.id, captureLayerState(item.id));
       const def = { scaleX: 1, scaleY: 1, rotate: 0, x: 0, y: 0 };
       adj.querySelector('#adj-sx').value = def.scaleX;
       adj.querySelector('#adj-sy').value = def.scaleY;
@@ -307,7 +422,13 @@
       localStorage.setItem('dressup_layer_drag', JSON.stringify(dragMap));
       Renderer.renderCharacter($('#character-container'), save);
     };
-    adj.querySelector('#adj-done').onclick = function () { adj.remove(); };
+    adj.querySelector('#adj-done').onclick = function () {
+      adj.remove(); adjustCtx = null;
+    };
+    adjustCtx = { item: item, save: save };
+    } finally {
+      openingAdjust = false;
+    }
   }
 
   // ===== 导入去重：同一件衣服只保留一个 =====
@@ -744,6 +865,9 @@
     isOpen: isOpen,
     renderItems: renderItems,
     openAdjust: openAdjustPanel,
-    receiveItems: receiveItems
+    receiveItems: receiveItems,
+    captureLayerState: captureLayerState,
+    pushUndoState: pushUndoState,
+    undoLayer: undoLayer
   };
 })();

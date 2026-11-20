@@ -195,6 +195,7 @@
       img: img,
       thumb: thumb,
       scene: opt.scene || currentScene(),
+      bgId: opt.bgId || (window.Scene ? Scene.currentBgId() : null),
       outfit: opt.outfit === undefined ? cloneOutfit() : opt.outfit,
       author: window.Friends && Friends.account ? Friends.account().name : ''
     };

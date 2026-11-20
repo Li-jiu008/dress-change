@@ -76,6 +76,9 @@
   function makeLayerImg(zIndex, file, fallbackKey, alt, onRealLoad, category, itemId) {
     const img = document.createElement('img');
     img.className = 'char-layer';
+    // 关掉浏览器自带的图片拖拽，否则按住拖动时会触发原生拖拽、把指针事件打断
+    img.draggable = false;
+    img.setAttribute('draggable', 'false');
     img.style.zIndex = zIndex;
     if (alt) img.alt = alt;
 
@@ -117,7 +120,7 @@
   // ===== 光影：每个图层单独叠一层“遮罩光” =====
   // 用同款图的透明轮廓做 mask，渐变就只落在人物的形状上，
   // 不会在透明区域留方块。强度由 --light-i 控制，可在人物设置里调。
-  const LIGHT_DEFAULT = 0.8;
+  const LIGHT_DEFAULT = 0;
 
   function getLightIntensity() {
     try {

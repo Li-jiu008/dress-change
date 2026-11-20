@@ -38,6 +38,9 @@
     if (!itemId) return;
     const map = loadDrag();
     if (!(itemId in map)) return;
+    if (window.Wardrobe && Wardrobe.pushUndoState && Wardrobe.captureLayerState) {
+      Wardrobe.pushUndoState(itemId, Wardrobe.captureLayerState(itemId));
+    }
     delete map[itemId];
     saveDrag(map);
     rerender();
@@ -170,21 +173,34 @@
 
   function startDrag(e, img) {
     const map = loadDrag();
-    const cur = map[img.dataset.itemId] || { x: 0, y: 0 };
+    const itemId = img.dataset.itemId;
+    const cur = map[itemId] || { x: 0, y: 0 };
     dragging = {
       img: img,
-      itemId: img.dataset.itemId,
+      itemId: itemId,
+      pointerId: e.pointerId,
       startX: e.clientX,
       startY: e.clientY,
       ox: cur.x || 0,
       oy: cur.y || 0,
+      curX: cur.x || 0,
+      curY: cur.y || 0,
       cw: container.offsetWidth || 1,
       ch: container.offsetHeight || 1,
-      moved: false
+      moved: false,
+      // 拖动会同时改 drag 偏移和「调整」面板的状态，撤回时两份都要还原
+      beforeState: (window.Wardrobe && Wardrobe.captureLayerState) ? Wardrobe.captureLayerState(itemId) : null
     };
     img.style.cursor = 'grabbing';
     container.style.cursor = 'grabbing';
-    try { img.setPointerCapture && img.setPointerCapture(e.pointerId); } catch (err) {}
+    // 捕获在容器上（img 是 pointer-events:none，挂在 img 上容易在重渲染时丢捕获）
+    try { container.setPointerCapture(e.pointerId); } catch (err) {}
+  }
+
+  // 重新渲染会把图层节点换掉，按 itemId 找回当前那一个
+  function layerFor(itemId) {
+    if (!container || !itemId) return null;
+    return container.querySelector('.char-layer[data-item-id="' + itemId + '"]');
   }
 
   function onPointerDown(e) {
@@ -198,13 +214,28 @@
 
   function onPointerMove(e) {
     if (dragging) {
+      if (dragging.pointerId !== undefined && e.pointerId !== undefined && e.pointerId !== dragging.pointerId) return;
       const dx = e.clientX - dragging.startX;
       const dy = e.clientY - dragging.startY;
       if (!dragging.moved && Math.abs(dx) < MIN_MOVE && Math.abs(dy) < MIN_MOVE) return;
       dragging.moved = true;
+      // 第一次真正移动时把「拖动前」的状态压进统一撤回栈
+      if (dragging.beforeState && window.Wardrobe && Wardrobe.pushUndoState) {
+        Wardrobe.pushUndoState(dragging.itemId, dragging.beforeState);
+        dragging.beforeState = null;
+      }
+      // 节点可能已经被重新渲染替换，按 itemId 找回
+      let img = dragging.img;
+      if (!img || !img.isConnected) {
+        img = layerFor(dragging.itemId);
+        dragging.img = img;
+      }
+      if (!img) return;
       const px = dragging.ox + dx / dragging.cw * 100;
       const py = dragging.oy + dy / dragging.ch * 100;
-      applyOffset(dragging.img, px, py);
+      dragging.curX = px;
+      dragging.curY = py;
+      applyOffset(img, px, py);
       return;
     }
 
@@ -226,23 +257,20 @@
     if (!dragging) return;
     const d = dragging;
     dragging = null;
-    d.img.style.cursor = '';
-    container.style.cursor = '';
+    try {
+      if (container && d.pointerId !== undefined && container.hasPointerCapture && container.hasPointerCapture(d.pointerId)) {
+        container.releasePointerCapture(d.pointerId);
+      }
+    } catch (err) {}
+    if (d.img) d.img.style.cursor = '';
+    if (container) container.style.cursor = '';
     if (!d.moved) return;
 
+    // 位置直接用拖动过程中记下的百分比，不再从 transform 字符串里反解
     const map = loadDrag();
-    const base = d.img.dataset.baseTransform || '';
-    // 从当前 transform 里反推最终偏移
-    const m = /^translate\((-?[0-9.]+)%,\s*(-?[0-9.]+)%\)/.exec(d.img.style.transform);
-    if (m) {
-      map[d.itemId] = { x: parseFloat(m[1]), y: parseFloat(m[2]) };
-    } else {
-      map[d.itemId] = { x: 0, y: 0 };
-    }
+    map[d.itemId] = { x: d.curX, y: d.curY };
     saveDrag(map);
     toast('dragSaved');
-    // 保证 base 没被破坏（拖动时只改了最外层 translate）
-    d.img.dataset.baseTransform = base;
   }
 
   /* ---------- 双击复位 ---------- */
@@ -252,6 +280,9 @@
     e.preventDefault();
     const map = loadDrag();
     if (map[img.dataset.itemId]) {
+      if (window.Wardrobe && Wardrobe.pushUndoState && Wardrobe.captureLayerState) {
+        Wardrobe.pushUndoState(img.dataset.itemId, Wardrobe.captureLayerState(img.dataset.itemId));
+      }
       delete map[img.dataset.itemId];
       saveDrag(map);
       rerender();
@@ -263,10 +294,15 @@
   function attach() {
     container = document.getElementById('character-container');
     if (!container) return;
+    // 拖衣服时不要触发页面滚动/文字选择，否则指针会被浏览器抢走
+    container.style.touchAction = 'none';
+    container.style.userSelect = 'none';
     container.addEventListener('pointerdown', onPointerDown);
     window.addEventListener('pointermove', onPointerMove);
     window.addEventListener('pointerup', onPointerUp);
     window.addEventListener('pointercancel', onPointerUp);
+    container.addEventListener('lostpointercapture', onPointerUp);
+    window.addEventListener('blur', onPointerUp);
     container.addEventListener('dblclick', onDblClick);
 
     preloadAll();
