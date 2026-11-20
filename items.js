@@ -30,6 +30,7 @@
     { id: 'gown_ivory_rose_01', name: '象牙玫瑰公主礼服', category: 'dress', price: 200, src: 'assets/clothes/dresses/gown_ivory_rose_01.png', isCustom: false },
     { id: 'shoes_princess_01', name: '公主的鞋子', category: 'shoes', price: 80, src: 'assets/clothes/shoes/shoes_princess_01.png', isCustom: false },
     { id: 'pose_default_real', name: '默认', category: 'pose', price: 0, src: 'assets/character/body.png', isCustom: false },
+    { id: 'pose_bun_01', name: '丸子头人物', category: 'pose', price: 200, src: 'assets/character/body_bun_01.png', isCustom: false, bakedEyes: true },
     { id: 'pose_stand_02', name: '站立手微张', category: 'pose', price: 0, src: 'assets/clothes/dresses/pose_stand_02.png', isCustom: false },
     { id: 'eyes_brown_01', name: '棕色眼睛', category: 'eyes', price: 0, src: 'assets/clothes/dresses/eyes_brown_01.png', isCustom: false },
     { id: 'pose_walk_01', name: '走路', category: 'pose', price: 0, src: 'assets/clothes/dresses/pose_walk_01.png', isCustom: false },

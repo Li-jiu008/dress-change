@@ -247,9 +247,10 @@
     }
     // 常驻身体：如果穿了 pose（动作），用 pose 图替换 body
     const poseId = eq.pose;
+    let poseItem = null;
     let bodySrc = FIXED_FILE.body;
     if (poseId && poseId !== 'pose_default_real') {
-      const poseItem = Items.getItem(poseId);
+      poseItem = Items.getItem(poseId);
       if (poseItem) bodySrc = poseItem.src;
     }
     const bodyImg = makeLayerImg(LAYER_Z.body, bodySrc, 'fixed_body', 'body', function () {
@@ -264,9 +265,9 @@
     bodyImg.style.objectPosition = 'center bottom';
     frag.appendChild(bodyImg);
 
-    // 眼睛层（覆盖在脸上）
+    // 眼睛层（覆盖在脸上）；丸子头人物这类“整身立绘”已经画好眼睛，跳过叠加
     const eyesId = eq.eyes;
-    if (eyesId) {
+    if (eyesId && !(poseItem && poseItem.bakedEyes)) {
       const eyesItem = Items.getItem(eyesId);
       if (eyesItem) {
         const eyesImg = makeLayerImg(LAYER_Z.eyes, eyesItem.src, eyesItem.id, eyesItem.name, null, 'eyes', eyesItem.id);
