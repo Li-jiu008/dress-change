@@ -13,6 +13,7 @@
   let unsub = null;
   let opened = false;
   let loading = false;
+  let expiryTimer = null;
   const comments = {};      // postId → 评论数组
   const expanded = {};      // postId → true
 
@@ -57,6 +58,16 @@
     return p(d.getMonth() + 1) + '/' + p(d.getDate()) + ' ' + p(d.getHours()) + ':' + p(d.getMinutes());
   }
 
+  function postTtl() {
+    return (window.Cloud && Cloud.POST_TTL_MS) || 7 * 24 * 60 * 60 * 1000;
+  }
+
+  // 帖子从发表起只保留 7 天；到点后界面立即不再显示
+  function isLivePost(p) {
+    const born = Number(p && p.createdAt);
+    return !!born && born + postTtl() > Date.now();
+  }
+
   const S = {
     btn: 'padding:7px 12px;border:none;background:#d4719a;color:#fff;border-radius:8px;cursor:pointer;font-size:12px;font-family:inherit;',
     ghost: 'padding:7px 12px;border:1px solid #e0c9d3;background:#fff;color:#8a3b55;border-radius:8px;cursor:pointer;font-size:12px;font-family:inherit;'
@@ -79,16 +90,17 @@
 
   function build() {
     const me = uid();
+    const livePosts = posts.filter(isLivePost);
     let body;
     if (loading) {
       body = '<div style="text-align:center;color:#b08a9b;font-size:13px;padding:40px 10px;">…</div>';
-    } else if (!posts.length) {
+    } else if (!livePosts.length) {
       body = '<div style="text-align:center;color:#b08a9b;font-size:13px;line-height:1.9;padding:40px 12px;">' +
         (window.Cloud && Cloud.configured && Cloud.configured() && location.protocol !== 'file:'
           ? escapeHtml(t('communityEmpty'))
           : escapeHtml(offlineHint())) + '</div>';
     } else {
-      body = posts.map(function (p) {
+      body = livePosts.map(function (p) {
         const liked = me && p.likedBy && p.likedBy.indexOf(me) >= 0;
         const likeCount = (p.likedBy || []).length;
         const mine = me && p.uid === me;
@@ -112,11 +124,11 @@
             '<div style="width:24px;height:24px;border-radius:50%;background:#f7dbe6;display:flex;align-items:center;justify-content:center;font-size:12px;">👤</div>' +
             '<div style="flex:1;min-width:0;">' +
               '<div style="font-size:12px;font-weight:600;color:#4a2b38;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">' + escapeHtml((p.author && (p.author.name || p.author.id)) || t('communityAnonymous')) + '</div>' +
-              '<div style="font-size:10px;color:#b08a9b;">' + fmtTime(p.createdAt) + (p.scene ? ' · ' + escapeHtml(p.scene) : '') + '</div>' +
+              '<div style="font-size:10px;color:#b08a9b;">' + fmtTime(p.createdAt) + (p.scene ? ' · ' + escapeHtml(p.scene) : '') + ' · ⏳ ' + escapeHtml(t('communityExpireShort')) + '</div>' +
             '</div>' +
             (mine ? '<button data-del-post="' + escapeAttr(p._id) + '" title="' + escapeAttr(t('del')) + '" style="border:none;background:none;color:#c08aa0;cursor:pointer;font-size:13px;">🗑</button>' : '') +
           '</div>' +
-          '<img data-zoom="' + escapeAttr(p._id) + '" src="' + escapeAttr(p.thumb || p.img) + '" style="width:100%;display:block;background:#fdf6f9;max-height:420px;object-fit:cover;cursor:zoom-in;">' +
+          '<img data-zoom="' + escapeAttr(p._id) + '" src="' + escapeAttr(p.img || p.thumb) + '" loading="lazy" decoding="async" style="width:100%;display:block;background:#fdf6f9;max-height:420px;object-fit:cover;cursor:zoom-in;">' +
           '<div style="padding:10px 12px;">' +
             (p.name ? '<div style="font-size:13px;font-weight:600;color:#8a3b55;">' + escapeHtml(p.name) + '</div>' : '') +
             (p.caption ? '<div style="font-size:12px;color:#6b4a57;line-height:1.55;margin-top:3px;white-space:pre-wrap;word-break:break-word;">' + escapeHtml(p.caption) + '</div>' : '') +
@@ -281,6 +293,7 @@
         '<div style="font-size:12px;color:#8a3b55;font-weight:600;margin-top:8px;">' + escapeHtml(look.name || '') + '</div>' +
         '<textarea id="cm-caption" maxlength="120" placeholder="' + escapeAttr(t('communityCaption')) + '" style="width:100%;height:70px;margin-top:8px;padding:9px 10px;border:1px solid #e5d3da;border-radius:8px;font-size:13px;font-family:inherit;box-sizing:border-box;resize:none;outline:none;"></textarea>' +
         '<div style="font-size:11px;color:#b08a9b;line-height:1.6;margin-top:6px;">' + t('communityPublicHint') + '</div>' +
+        '<div style="font-size:12px;color:#a33b5b;line-height:1.6;margin-top:8px;padding:8px 10px;background:#fff5f8;border:1px solid #f3d1de;border-radius:8px;font-weight:600;">' + t('communityExpireHint') + '</div>' +
       '</div>' +
       '<div style="padding:12px 14px;border-top:1px solid #f0e6ec;display:flex;gap:8px;">' +
         '<button id="cm-cancel" style="' + S.ghost + 'flex:1;">' + t('cancel') + '</button>' +
@@ -341,10 +354,22 @@
     unsub = Cloud.listenPosts(function (list) {
       posts = list;
       loading = false;
-      const me = uid();
-      // 作者自己的名字变了也同步一下（只影响显示，不改数据）
       build();
     });
+
+    // 面板一直开着跨过 7 天时，也让帖子立刻消失并尝试清理
+    if (expiryTimer) clearInterval(expiryTimer);
+    expiryTimer = setInterval(function () {
+      if (!opened) return;
+      const expired = posts.filter(function (p) { return !isLivePost(p); });
+      if (!expired.length) return;
+      expired.forEach(function (p) {
+        if (window.Cloud && Cloud.deletePost) {
+          Cloud.deletePost(p._id).catch(function () {});
+        }
+      });
+      build();
+    }, 30000);
   }
 
   function close() {
@@ -353,6 +378,7 @@
     document.body.classList.remove('panel-open');
     opened = false;
     if (unsub) { unsub(); unsub = null; }
+    if (expiryTimer) { clearInterval(expiryTimer); expiryTimer = null; }
   }
 
   /* ---------- 初始化 ---------- */

@@ -15,6 +15,7 @@
   const SDK = 'https://www.gstatic.com/firebasejs/10.12.2/';
   const ADMIN_CODE = 'QS-7JFFYV';
   const ADMIN_WELCOME = '欢迎加入游戏，我是该游戏的管理员。如果有任何问题请点击下方反馈箱进行反馈，我看到后会对您的反馈进行回复。';
+  const POST_TTL_MS = 7 * 24 * 60 * 60 * 1000; // 社区帖子保留 7 天
 
   let db = null;
   let auth = null;
@@ -58,10 +59,33 @@
       await loadScript(SDK + 'firebase-firestore-compat.js');
       if (!firebase.apps.length) firebase.initializeApp(cfg());
       auth = firebase.auth();
+      // 明确使用本地持久化，刷新/重开页面后仍保持 Google 登录态
+      await auth.setPersistence(firebase.auth.Auth.Persistence.LOCAL).catch(function (e) {
+        console.warn('[cloud] 设置登录持久化失败：', e);
+      });
       db = firebase.firestore();
       return true;
     })();
     return sdkPromise;
+  }
+
+  // 等 Firebase 把上次的登录态从本地读出来，避免页面刚打开时
+  // currentUser 还是 null，就误建一个新的匿名账号。
+  function waitForAuthUser() {
+    return new Promise(function (resolve) {
+      if (auth.currentUser) { resolve(auth.currentUser); return; }
+      let done = false;
+      const unsub = auth.onAuthStateChanged(function (user) {
+        if (done) return;
+        done = true;
+        try { unsub(); } catch (e) {}
+        resolve(user || null);
+      }, function () {
+        if (done) return;
+        done = true;
+        resolve(null);
+      });
+    });
   }
 
   // 初始化 Firebase。没有登录态时先建一个匿名账号，
@@ -70,11 +94,12 @@
     if (!configured()) throw new Error('not-configured');
     await loadSDK();
 
-    if (!auth.currentUser) {
+    const current = await waitForAuthUser();
+    if (!current) {
       const cred = await auth.signInAnonymously();
       uid = cred.user.uid;
     } else {
-      uid = auth.currentUser.uid;
+      uid = current.uid;
     }
     try { localStorage.setItem(UID_KEY, uid); } catch (e) {}
 
@@ -100,7 +125,27 @@
 
     // 管理员本人上线时，给每个好友补一条欢迎语（只补一次，不会刷屏）
     if (uid && adminUid && uid === adminUid) setTimeout(broadcastWelcome, 800);
+    setTimeout(cleanupExpiredPosts, 1200);
     return uid;
+  }
+
+  // 每次打开游戏都顺手清一遍过期帖子，不依赖当天有没有人打开社区
+  async function cleanupExpiredPosts() {
+    if (!db || !uid) return 0;
+    try {
+      const cutoff = Date.now() - POST_TTL_MS;
+      const snap = await db.collection('posts').where('createdAt', '<=', cutoff).get();
+      let n = 0;
+      snap.forEach(function (d) {
+        db.collection('posts').doc(d.id).delete().then(function () { n++; }).catch(function (e) {
+          console.warn('[cloud] 过期帖子删除失败（检查 posts 规则是否已发布）：', d.id, e);
+        });
+      });
+      return n;
+    } catch (e) {
+      console.warn('[cloud] 清理过期帖子失败：', e);
+      return 0;
+    }
   }
 
   function ready() {
@@ -173,26 +218,11 @@
       return { mode: 'already', uid: u.uid, beforeUid: beforeUid };
     }
 
-    // 匿名账号先尝试「绑定」，uid 不变，本地进度和好友码都保留
-    if (u && u.isAnonymous) {
-      try {
-        await u.linkWithPopup(provider);
-        await afterAuth();
-        return { mode: 'linked', uid: uid, beforeUid: beforeUid };
-      } catch (e) {
-        // 这个 Google 账号已经注册过：改成登录已有账号
-        if (e && (e.code === 'auth/credential-already-in-use' ||
-                  e.code === 'auth/email-already-in-use' ||
-                  e.code === 'auth/provider-already-linked')) {
-          await auth.signInWithPopup(provider);
-          await afterAuth();
-          return { mode: 'switched', uid: uid, beforeUid: beforeUid };
-        }
-        throw e;
-      }
-    }
-
-    // 已登录其他方式：切换成 Google
+    // 不要先从匿名账号 linkWithPopup、失败后再开第二个弹窗。
+    // 第二次弹窗不是在用户点击的同一段调用里打开的，浏览器会拦截，
+    // 表现出来就是“第一次能登，退出后再也登不进去”。
+    // 这里始终只开一次 Google 弹窗，登录后由 auth.js 负责切换账号、
+    // 载入云端存档或把本机进度上传到 Google 账号。
     await auth.signInWithPopup(provider);
     await afterAuth();
     return { mode: 'switched', uid: uid, beforeUid: beforeUid };
@@ -432,6 +462,7 @@
   async function createPost(look, caption, shopItems) {
     if (!db || !uid) throw new Error('not-ready');
     if (!look || !look.img) throw new Error('empty');
+    const now = Date.now();
     const payload = {
       uid: uid,
       author: author(),
@@ -444,25 +475,42 @@
         return { id: s.id, docId: s.docId, name: s.name, category: s.category, min: s.min, max: s.max };
       }),
       likedBy: [],
-      createdAt: Date.now()
+      createdAt: now,
+      // 服务端 TTL 用这个字段；即使没人打开游戏，也会被 Firestore 清理
+      expiresAt: firebase.firestore.Timestamp.fromMillis(now + POST_TTL_MS)
     };
     if (JSON.stringify(payload).length > 700 * 1024) throw new Error('too-big');
     const ref = await db.collection('posts').add(payload);
     return ref.id;
   }
 
+  function postExpired(v) {
+    const born = Number(v && v.createdAt);
+    return !born || born + POST_TTL_MS <= Date.now();
+  }
+
   function listenPosts(onChange) {
     if (!db || !uid) return function () {};
     return db.collection('posts').onSnapshot(function (snap) {
       const list = [];
+      const expired = [];
       snap.forEach(function (d) {
         const v = d.data() || {};
         v._id = d.id;
         if (!Array.isArray(v.likedBy)) v.likedBy = [];
-        list.push(v);
+        if (postExpired(v)) expired.push(v);
+        else list.push(v);
       });
       list.sort(function (a, b) { return (b.createdAt || 0) - (a.createdAt || 0); });
       onChange(list);
+
+      // 到期的帖子从界面先消失；同时尝试真正删除文档。
+      // 规则允许任何已登录玩家删除「已过期」帖子，所以不依赖作者当时在线。
+      expired.forEach(function (p) {
+        db.collection('posts').doc(p._id).delete().catch(function (e) {
+          console.warn('[cloud] 到期帖子删除失败（可能规则还没发布）：', p._id, e);
+        });
+      });
     }, function (err) {
       console.warn('[cloud] 社区监听失败：', err);
       onChange([]);
@@ -729,6 +777,7 @@
     signOut: signOutNow,
     emailFor: emailFor,
     ADMIN_CODE: ADMIN_CODE,
+    POST_TTL_MS: POST_TTL_MS,
     registerCode: registerCode,
     resolveCode: resolveCode,
     sendChat: sendChat,

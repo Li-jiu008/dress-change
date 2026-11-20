@@ -15,8 +15,8 @@
   const DB_NAME = 'dressup_gallery';
   const STORE = 'looks';
   const LS_KEY = 'dressup_looks';
-  const MAX_IMG_W = 760;      // 相册里保存的图宽（JPEG，控制体积）
-  const MAX_THUMB_W = 300;
+  const MAX_IMG_W = 960;      // 相册里保存的图宽（JPEG，兼顾清晰度和体积）
+  const MAX_THUMB_W = 360;
 
   let dbPromise = null;
   let panel = null;
@@ -154,6 +154,8 @@
     const c = document.createElement('canvas');
     c.width = w; c.height = h;
     const ctx = c.getContext('2d');
+    ctx.imageSmoothingEnabled = true;
+    ctx.imageSmoothingQuality = 'high';
     ctx.fillStyle = '#ffffff';
     ctx.fillRect(0, 0, w, h);
     ctx.drawImage(canvas, 0, 0, w, h);
@@ -179,8 +181,8 @@
     opt = opt || {};
     let img, thumb;
     try {
-      img = shrink(canvas, MAX_IMG_W, 0.82);
-      thumb = shrink(canvas, MAX_THUMB_W, 0.72);
+      img = shrink(canvas, MAX_IMG_W, 0.9);
+      thumb = shrink(canvas, MAX_THUMB_W, 0.8);
     } catch (e) {
       // file:// 下画布被「污染」，浏览器禁止导出像素
       throw new Error('tainted');
