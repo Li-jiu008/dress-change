@@ -47,9 +47,15 @@ service cloud.firestore {
       allow update, delete: if false;
     }
 
+    // 社区帖子满 7 天后允许任何已登录玩家清理（只删已过期，删不了有效期内的帖子）
+    function isExpiredPost() {
+      return resource.data.createdAt is number
+             && resource.data.createdAt + 604800000 <= request.time.seconds * 1000;
+    }
+
     // ===== 社区（公开） =====
     // 所有玩家都能看帖、看评论；帖子作者能改内容/删帖；
-    // 其他人只能改 likedBy（点赞）
+    // 其他人只能改 likedBy（点赞）；到期的帖子允许自动清理
     match /posts/{pid} {
       allow read: if true;
       allow create: if request.auth != null
@@ -58,7 +64,11 @@ service cloud.firestore {
         request.auth.uid == resource.data.uid ||
         request.resource.data.diff(resource.data).affectedKeys().hasOnly(['likedBy'])
       );
-      allow delete: if request.auth != null && request.auth.uid == resource.data.uid;
+      allow delete: if request.auth != null && (
+        request.auth.uid == resource.data.uid ||
+        isAdmin() ||
+        isExpiredPost()
+      );
 
       match /comments/{cid} {
         allow read: if true;
