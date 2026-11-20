@@ -11,6 +11,8 @@
 
   const ACC_KEY = 'dressup_account';
   const FR_KEY = 'dressup_friends';
+  const ADMIN_CODE = 'QS-7JFFYV';
+  const ADMIN_NAME = '游戏管理员';
   const GIFT_PREFIX = 'QSGIFT1-';
   const CODE_MAX = 4000;        // 礼物码超过这个长度就改用文件
   const ALPH = 'ACDEFGHJKLMNPQRTUVWXY34679';
@@ -76,6 +78,44 @@
   }
 
   function saveAccount(a) { localStorage.setItem(ACC_KEY, JSON.stringify(a)); }
+
+  function isAdminId(id) {
+    return String(id || '').trim().toUpperCase() === ADMIN_CODE;
+  }
+  function isAdminAccount() { return isAdminId(ensureAccount().id); }
+  function isAdmin(friend) { return !!(friend && (friend.admin || isAdminId(friend.id))); }
+
+  // 所有普通玩家开局就带管理员好友；管理员自己不加自己
+  function ensureAdminFriend() {
+    const me = ensureAccount();
+    if (isAdminId(me.id)) return false;
+    const list = loadFriends();
+    const found = list.filter(function (f) { return isAdminId(f.id); })[0];
+    if (found) {
+      found.admin = true;
+      found.locked = true;
+      if (!found.name) found.name = ADMIN_NAME;
+      saveFriends(list);
+    } else {
+      list.unshift({ id: ADMIN_CODE, name: ADMIN_NAME, admin: true, locked: true, addedAt: Date.now() });
+      saveFriends(list);
+    }
+
+    // 云端补一条双向好友关系，管理员那边登录时就能看到这个玩家
+    if (window.Cloud && Cloud.configured && Cloud.configured()) {
+      Cloud.ready().then(function (ok) {
+        if (!ok || !Cloud.resolveCode || !Cloud.linkFriend) return;
+        return Cloud.resolveCode(ADMIN_CODE).then(function (r) {
+          if (!r || !r.uid || r.uid === Cloud.uid()) return;
+          const l2 = loadFriends();
+          l2.forEach(function (f) { if (isAdminId(f.id)) f.uid = r.uid; });
+          saveFriends(l2);
+          return Cloud.linkFriend(r.uid, ADMIN_CODE, ADMIN_NAME);
+        });
+      }).catch(function (e) { console.warn('[friends] 添加管理员好友失败：', e); });
+    }
+    return true;
+  }
 
   function ensureAccount() {
     const a = loadAccount();
@@ -248,22 +288,24 @@
       friendRows = '<div style="font-size:13px;color:#b08a9b;line-height:1.6;padding:8px 0;">' + t('friendsEmpty') + '</div>';
     } else {
       friendRows = friends.map(function (f, i) {
+        const adm = isAdmin(f);
         const shown = nameOf(f);
         const subLine = (f.alias
           ? t('originalName') + ' ' + (f.name || f.id) + ' · '
-          : '') + f.id;
+          : '') + f.id + (adm ? ' · ' + t('adminTag') : '');
         return '<div style="padding:10px 0;border-bottom:1px solid #f6e8ee;">' +
           '<div style="display:flex;align-items:center;gap:8px;">' +
             '<div style="flex:1;min-width:0;">' +
-              '<div style="font-size:14px;font-weight:600;color:#4a2b38;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">' + escapeHtml(shown) + '</div>' +
+              '<div style="font-size:14px;font-weight:600;color:#4a2b38;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">' + (adm ? '🛡 ' : '') + escapeHtml(shown) + '</div>' +
               '<div style="font-size:11px;color:#b08a9b;letter-spacing:.5px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">' + escapeHtml(subLine) + '</div>' +
             '</div>' +
             '<button data-rename="' + i + '" title="' + escapeAttr(t('rename')) + '" style="' + S.btnIcon + '">✏️</button>' +
           '</div>' +
           '<div style="display:flex;gap:8px;margin-top:8px;">' +
             '<button data-chat="' + i + '" style="' + S.btnPrimary + 'flex:1;">' + t('chat') + '</button>' +
-            '<button data-gift="' + i + '" style="' + S.btnGhost + 'flex:1;">' + t('sendGift') + '</button>' +
-            '<button data-del="' + i + '" style="' + S.btnDanger + '">' + t('del') + '</button>' +
+            (adm ? '' : '<button data-gift="' + i + '" style="' + S.btnGhost + 'flex:1;">' + t('sendGift') + '</button>') +
+            (adm ? '<span style="' + S.btnGhost + 'flex:1;text-align:center;color:#b08a9b;cursor:default;">' + t('adminLocked') + '</span>'
+                 : '<button data-del="' + i + '" style="' + S.btnDanger + '">' + t('del') + '</button>') +
           '</div>' +
         '</div>';
       }).join('');
@@ -599,6 +641,7 @@
 
   function init() {
     ensureAccount();
+    ensureAdminFriend();
     const btn = document.getElementById('btn-friend');
     if (btn) btn.addEventListener('click', function () {
       if (panel && panel.classList.contains('open')) close();
@@ -619,6 +662,10 @@
     rename: openRename,
     setAlias: setAlias,
     alias: currentAlias,
+    isAdmin: isAdmin,
+    isAdminAccount: isAdminAccount,
+    adminCode: ADMIN_CODE,
+    ensureAdminFriend: ensureAdminFriend,
     refresh: function () {
       if (panel && panel.classList.contains('open')) buildPanel();
     },

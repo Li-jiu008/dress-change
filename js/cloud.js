@@ -13,11 +13,14 @@
 
   const UID_KEY = 'dressup_cloud_uid';
   const SDK = 'https://www.gstatic.com/firebasejs/10.12.2/';
+  const ADMIN_CODE = 'QS-7JFFYV';
+  const ADMIN_WELCOME = '欢迎加入游戏，我是该游戏的管理员。如果有任何问题请点击下方反馈箱进行反馈，我看到后会对您的反馈进行回复。';
 
   let db = null;
   let auth = null;
   let readyPromise = null;
   let uid = null;
+  let adminUid = null;
 
   function cfg() { return window.FIREBASE_CONFIG || null; }
 
@@ -63,6 +66,15 @@
 
     const acc = window.Friends && window.Friends.account ? window.Friends.account() : null;
     if (acc && acc.id) await registerCode(acc.id, acc.name);
+
+    // 管理员账号是谁：所有人用好友码 QS-7JFFYV 解析，不写死 Firebase uid
+    try {
+      const s = await db.collection('codes').doc(ADMIN_CODE).get();
+      if (s.exists) adminUid = (s.data() || {}).uid || null;
+    } catch (e) { console.warn('[cloud] 解析管理员账号失败：', e); }
+
+    // 管理员本人上线时，给每个好友补一条欢迎语（只补一次，不会刷屏）
+    if (uid && adminUid && uid === adminUid) setTimeout(broadcastWelcome, 800);
     return uid;
   }
 
@@ -121,6 +133,30 @@
       createdAt: Date.now()
     }));
     return true;
+  }
+
+  // 管理员上线后，给还没有收到过管理员消息的好友补一条欢迎语
+  async function broadcastWelcome() {
+    if (!db || !uid || uid !== adminUid) return 0;
+    let sent = 0;
+    try {
+      const links = await db.collection('links').where('members', 'array-contains', uid).get();
+      const targets = [];
+      links.forEach(function (d) {
+        const v = d.data() || {};
+        const other = (v.a && v.a.uid === uid) ? v.b : v.a;
+        if (other && other.uid && other.uid !== uid) targets.push(other.uid);
+      });
+      for (let i = 0; i < targets.length; i++) {
+        const msgs = await chatRef(targets[i]).where('fromUid', '==', uid).limit(1).get();
+        if (!msgs.empty) continue;  // 已经有过管理员消息，不再重复欢迎
+        await sendChat(targets[i], { type: 'admin-welcome', text: ADMIN_WELCOME });
+        sent++;
+      }
+    } catch (e) {
+      console.warn('[cloud] 发送管理员欢迎语失败：', e);
+    }
+    return sent;
   }
 
   // 监听和某个好友的会话；返回取消监听函数
@@ -383,7 +419,7 @@
       seller: post.author || { id: '', name: '' },
       buyer: author(),
       minPrice: shopItem.min,
-      maxPrice: shopItem.max,
+      maxPrice: shopItem.max || 0,
       price: 0,
       status: 'requested',
       createdAt: Date.now(),
@@ -417,10 +453,64 @@
     return true;
   }
 
+  // ---------- 反馈箱 ----------
+  // feedback/{id}: { uid, code, name, content, createdAt, status, reply?, repliedAt? }
+  async function sendFeedback(content) {
+    if (!db || !uid) throw new Error('not-ready');
+    const body = String(content || '').trim().slice(0, 500);
+    if (!body) throw new Error('empty');
+    const acc = window.Friends && window.Friends.account ? window.Friends.account() : { id: '', name: '' };
+    await db.collection('feedback').add({
+      uid: uid,
+      code: acc.id || '',
+      name: acc.name || '',
+      content: body,
+      status: 'new',
+      createdAt: Date.now()
+    });
+    return true;
+  }
+
+  // 只有管理员账号能读（规则里按 QS-7JFFYV 解析出的 uid 判断）
+  function listenFeedback(onChange) {
+    if (!db || !uid) return function () {};
+    return db.collection('feedback').orderBy('createdAt', 'desc').onSnapshot(function (snap) {
+      const list = [];
+      snap.forEach(function (d) {
+        const v = d.data() || {};
+        v._id = d.id;
+        list.push(v);
+      });
+      onChange(list);
+    }, function (err) {
+      console.warn('[cloud] 反馈箱监听失败：', err);
+      onChange([]);
+    });
+  }
+
+  // 管理员回复：写回反馈文档 + 用管理员账号给提交人发一条聊天消息（顺便解锁对话）
+  async function replyFeedback(feedbackId, text, userUid) {
+    if (!db || !uid) throw new Error('not-ready');
+    const body = String(text || '').trim().slice(0, 300);
+    if (!body) throw new Error('empty');
+    await db.collection('feedback').doc(feedbackId).update({
+      reply: body, repliedAt: Date.now(), status: 'replied'
+    });
+    if (userUid && userUid !== uid) {
+      try {
+        await sendChat(userUid, { type: 'text', text: '【反馈回复】' + body });
+      } catch (e) { console.warn('[cloud] 反馈回复消息没发出去：', e); }
+    }
+    return true;
+  }
+
   window.Cloud = {
     ready: ready,
     configured: configured,
     uid: function () { return uid; },
+    adminUid: function () { return adminUid; },
+    isAdmin: function () { return !!uid && uid === adminUid; },
+    ADMIN_CODE: ADMIN_CODE,
     registerCode: registerCode,
     resolveCode: resolveCode,
     sendChat: sendChat,
@@ -441,6 +531,9 @@
     getItem: getItem,
     createTrade: createTrade,
     listenTrades: listenTrades,
-    updateTrade: updateTrade
+    updateTrade: updateTrade,
+    sendFeedback: sendFeedback,
+    listenFeedback: listenFeedback,
+    replyFeedback: replyFeedback
   };
 })();

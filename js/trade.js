@@ -36,8 +36,13 @@
 
   function rangeFor(category) {
     const b = BASE[category] || DEFAULT_BASE;
-    // 下限 50%，上限 400%：自制衣服是手工产物，允许卖得比商城贵不少
-    return { min: round5(b * 0.5), max: round5(b * 4) };
+    // 只保留 50% 下限，价格上限取消：卖家可以按自己的作品定价
+    return { min: round5(b * 0.5), max: null };
+  }
+
+  // 有上限显示区间，没上限只显示「最低价」
+  function rangeText(min, max) {
+    return (max && max > 0) ? (min + ' – ' + max) : ('≥ ' + min);
   }
 
   /* ---------- 发布时把自制衣服登记到云端 ---------- */
@@ -78,7 +83,7 @@
         (item && item.src ? '<img src="' + escapeHtml(item.src) + '" style="width:100%;max-height:220px;object-fit:contain;background:#fdf6f9;border-radius:10px;display:block;">' : '') +
         '<div style="font-size:13px;font-weight:600;color:#4a2b38;margin-top:8px;">' + escapeHtml(shopItem.name) + '</div>' +
         '<div style="font-size:11px;color:#b08a9b;margin-top:4px;">' + t('tradeSeller') + '：' + escapeHtml((post.author && (post.author.name || post.author.id)) || '') + '</div>' +
-        '<div style="font-size:11px;color:#b08a9b;margin-top:2px;">' + t('tradeRangeHint') + ' ' + offer.min + ' – ' + offer.max + ' ' + t('coins') + '</div>' +
+        '<div style="font-size:11px;color:#b08a9b;margin-top:2px;">' + t('tradeRangeHint') + ' ' + rangeText(offer.min, offer.max) + ' ' + t('coins') + '</div>' +
         '<div style="font-size:11px;color:#b08a9b;line-height:1.7;margin-top:6px;">' + t('tradeRequestHint') + '</div>' +
       '</div>' +
       '<div style="padding:11px 14px;border-top:1px solid #f0e6ec;display:flex;gap:8px;">' +
@@ -182,7 +187,7 @@
         (tr.price ? '<div style="font-size:12px;color:#8a3b55;">' + tr.price + ' ' + t('coins') + '</div>' : '') +
       '</div>' +
       '<div style="font-size:11px;color:#b08a9b;margin-top:3px;">' + (iAmSeller ? t('tradeBuyer') : t('tradeSeller')) + '：' + escapeHtml(nm) + '</div>' +
-      '<div style="font-size:11px;color:#9a7b88;margin-top:5px;">' + escapeHtml(statusText) + (tr.status === 'requested' ? '（' + tr.minPrice + '–' + tr.maxPrice + '）' : '') + '</div>' +
+      '<div style="font-size:11px;color:#9a7b88;margin-top:5px;">' + escapeHtml(statusText) + (tr.status === 'requested' ? '（' + t('tradeMinShort') + ' ' + tr.minPrice + '）' : '') + '</div>' +
       (actions ? '<div style="display:flex;gap:8px;margin-top:9px;">' + actions + '</div>' : '') +
     '</div>';
   }
@@ -237,14 +242,15 @@
   function openPrice(tradeId) {
     const tr = trades.filter(function (x) { return x._id === tradeId; })[0];
     if (!tr) return;
-    const min = tr.minPrice, max = tr.maxPrice;
+    const min = tr.minPrice;
+    const start = Math.max(1, Math.round(min * 2));
     const mask = document.createElement('div');
     mask.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,.45);z-index:166;display:flex;align-items:center;justify-content:center;';
     mask.innerHTML = '<div style="background:#fff;border-radius:16px;width:320px;max-width:92vw;padding:14px 16px;box-shadow:0 10px 40px rgba(0,0,0,.28);">' +
       '<div style="font-size:15px;font-weight:600;color:#8a3b55;margin-bottom:6px;">' + t('tradeSetPrice') + '</div>' +
       '<div style="font-size:12px;color:#4a2b38;">' + escapeHtml(tr.itemName) + '</div>' +
-      '<div style="font-size:11px;color:#b08a9b;margin-top:4px;">' + t('tradePriceHint') + '：' + min + ' – ' + max + ' ' + t('coins') + '</div>' +
-      '<input id="tr-price" type="number" min="' + min + '" max="' + max + '" value="' + Math.round((min + max) / 2) + '" style="width:100%;margin-top:10px;padding:9px 10px;border:1px solid #e5d3da;border-radius:8px;font-size:14px;box-sizing:border-box;font-family:inherit;outline:none;">' +
+      '<div style="font-size:11px;color:#b08a9b;margin-top:4px;">' + t('tradePriceHint') + '：' + t('tradeMinOnly') + ' ' + min + ' ' + t('coins') + t('tradeNoMax') + '</div>' +
+      '<input id="tr-price" type="number" min="' + min + '" step="1" value="' + start + '" style="width:100%;margin-top:10px;padding:9px 10px;border:1px solid #e5d3da;border-radius:8px;font-size:14px;box-sizing:border-box;font-family:inherit;outline:none;">' +
       '<div id="tr-price-err" style="font-size:11px;color:#c0392b;height:16px;margin-top:4px;"></div>' +
       '<div style="display:flex;gap:8px;margin-top:8px;">' +
         '<button id="trp-cancel" style="' + S.ghost + '">' + t('cancel') + '</button>' +
@@ -256,8 +262,8 @@
       const input = mask.querySelector('#tr-price');
       const v = Math.round(Number(input.value));
       const err = mask.querySelector('#tr-price-err');
-      if (!Number.isFinite(v) || v < min || v > max) {
-        err.textContent = t('tradePriceInvalid') + ' ' + min + ' – ' + max;
+      if (!Number.isFinite(v) || v < min) {
+        err.textContent = t('tradePriceInvalid') + ' ' + min;
         return;
       }
       this.disabled = true;
